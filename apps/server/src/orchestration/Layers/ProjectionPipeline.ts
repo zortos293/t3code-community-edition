@@ -1,5 +1,10 @@
-import { ApprovalRequestId, type OrchestrationEvent } from "@t3tools/contracts";
-import { Effect, Layer, Option, Stream } from "effect";
+import {
+  ApprovalRequestId,
+  type ChatAttachment,
+  type OrchestrationEvent,
+} from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
@@ -27,6 +32,7 @@ import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { ProjectionThreadRepositoryLive } from "../../persistence/Layers/ProjectionThreads.ts";
+import { ServerConfig } from "../../config.ts";
 import {
   OrchestrationProjectionPipeline,
   type OrchestrationProjectionPipelineShape,
@@ -50,6 +56,107 @@ interface ProjectorDefinition {
   readonly name: ProjectorName;
   readonly apply: (event: OrchestrationEvent) => Effect.Effect<void, ProjectionRepositoryError>;
 }
+
+const ATTACHMENTS_ROUTE_PREFIX = "/attachments";
+const ATTACHMENTS_STATE_SUBDIRECTORY = "attachments";
+const IMAGE_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "image/svg+xml": ".svg",
+  "image/bmp": ".bmp",
+  "image/tiff": ".tiff",
+  "image/heic": ".heic",
+};
+
+function parseBase64DataUrl(
+  dataUrl: string,
+): { readonly mimeType: string; readonly base64: string } | null {
+  const match = /^data:([^;,]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(dataUrl.trim());
+  if (!match) {
+    return null;
+  }
+  const mimeType = match[1]?.trim().toLowerCase();
+  const base64 = match[2]?.replace(/\s+/g, "");
+  if (!mimeType || !base64) {
+    return null;
+  }
+  return { mimeType, base64 };
+}
+
+function inferImageExtension(attachment: Extract<ChatAttachment, { type: "image" }>): string {
+  const fromMime = IMAGE_EXTENSION_BY_MIME_TYPE[attachment.mimeType.toLowerCase()];
+  if (fromMime) {
+    return fromMime;
+  }
+  const fromName = attachment.name.includes(".")
+    ? `.${attachment.name.split(".").slice(-1)[0]?.toLowerCase() ?? ""}`
+    : "";
+  if (/^\.[a-z0-9]{1,12}$/.test(fromName)) {
+    return fromName;
+  }
+  return ".bin";
+}
+
+const materializeAttachmentsForProjection = Effect.fn(function* (input: {
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}) {
+  if (input.attachments.length === 0) {
+    return [] as ReadonlyArray<ChatAttachment>;
+  }
+
+  const serverConfig = yield* Effect.serviceOption(ServerConfig);
+  if (Option.isNone(serverConfig)) {
+    return input.attachments;
+  }
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const attachmentsRootDir = path.join(serverConfig.value.stateDir, ATTACHMENTS_STATE_SUBDIRECTORY);
+  const threadSegment = encodeURIComponent(input.threadId);
+  const messageSegment = encodeURIComponent(input.messageId);
+
+  return yield* Effect.forEach(
+    input.attachments,
+    (attachment, index) =>
+      Effect.gen(function* () {
+        if (attachment.type !== "image" || !attachment.dataUrl.startsWith("data:")) {
+          return attachment;
+        }
+
+        const parsed = parseBase64DataUrl(attachment.dataUrl);
+        if (!parsed) {
+          return attachment;
+        }
+
+        const bytes = Buffer.from(parsed.base64, "base64");
+        if (bytes.byteLength === 0) {
+          return attachment;
+        }
+
+        const fileName = `${index}${inferImageExtension(attachment)}`;
+        const relativePath = `${threadSegment}/${messageSegment}/${fileName}`;
+        const absolutePath = path.join(attachmentsRootDir, threadSegment, messageSegment, fileName);
+        yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true });
+        const alreadyExists = yield* fileSystem
+          .exists(absolutePath)
+          .pipe(Effect.catch(() => Effect.succeed(false)));
+        if (!alreadyExists) {
+          yield* fileSystem.writeFile(absolutePath, bytes);
+        }
+
+        return {
+          ...attachment,
+          dataUrl: `${ATTACHMENTS_ROUTE_PREFIX}/${relativePath}`,
+        } satisfies ChatAttachment;
+      }),
+    { concurrency: 1 },
+  );
+});
 
 function extractActivityRequestId(payload: unknown): ApprovalRequestId | null {
   if (typeof payload !== "object" || payload === null) {
@@ -174,6 +281,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const applyProjectsProjection: ProjectorDefinition["apply"] = (event) =>
     Effect.gen(function* () {
@@ -367,12 +477,33 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               : existingMessage && event.payload.text.length === 0
                 ? existingMessage.text
                 : event.payload.text;
+          const nextAttachments =
+            event.payload.attachments !== undefined
+              ? yield* materializeAttachmentsForProjection({
+                  threadId: event.payload.threadId,
+                  messageId: event.payload.messageId,
+                  attachments: event.payload.attachments,
+                }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                  Effect.catch((cause) =>
+                    Effect.logWarning("failed to persist message attachments", {
+                      threadId: event.payload.threadId,
+                      messageId: event.payload.messageId,
+                      cause,
+                    }).pipe(Effect.as(event.payload.attachments)),
+                  ),
+                )
+              : existingMessage?.attachments;
           yield* projectionThreadMessageRepository.upsert({
             messageId: event.payload.messageId,
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
             role: event.payload.role,
             text: nextText,
+            ...(nextAttachments && nextAttachments.length > 0
+              ? { attachments: [...nextAttachments] }
+              : {}),
             isStreaming: event.payload.streaming,
             createdAt: existingMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -901,6 +1032,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   OrchestrationProjectionPipeline,
   makeOrchestrationProjectionPipeline,
 ).pipe(
+  Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ProjectionProjectRepositoryLive),
   Layer.provideMerge(ProjectionThreadRepositoryLive),
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),

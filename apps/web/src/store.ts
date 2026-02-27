@@ -192,6 +192,38 @@ function toLegacyProvider(providerName: string | null): "codex" | "claudeCode" {
   return providerName === "claudeCode" ? "claudeCode" : "codex";
 }
 
+function resolveWsHttpOrigin(): string {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const bridgeWsUrl = window.desktopBridge?.getWsUrl?.();
+  const envWsUrl = import.meta.env.VITE_WS_URL as string | undefined;
+  const wsCandidate =
+    typeof bridgeWsUrl === "string" && bridgeWsUrl.length > 0
+      ? bridgeWsUrl
+      : typeof envWsUrl === "string" && envWsUrl.length > 0
+        ? envWsUrl
+        : null;
+  if (!wsCandidate) {
+    return window.location.origin;
+  }
+
+  try {
+    const wsUrl = new URL(wsCandidate);
+    const protocol = wsUrl.protocol === "wss:" ? "https:" : "http:";
+    return `${protocol}//${wsUrl.host}`;
+  } catch {
+    return window.location.origin;
+  }
+}
+
+function toAttachmentPreviewUrl(rawUrl: string): string {
+  if (rawUrl.startsWith("/")) {
+    return `${resolveWsHttpOrigin()}${rawUrl}`;
+  }
+  return rawUrl;
+}
+
 function normalizeTerminalIds(terminalIds: string[]): string[] {
   const ids = terminalIds.map((id) => id.trim()).filter((id) => id.length > 0);
   const unique = [...new Set(ids)].slice(0, MAX_THREAD_TERMINAL_COUNT);
@@ -456,7 +488,7 @@ export function reducer(state: AppState, action: Action): AppState {
                 name: attachment.name,
                 mimeType: attachment.mimeType,
                 sizeBytes: attachment.sizeBytes,
-                previewUrl: attachment.dataUrl,
+                previewUrl: toAttachmentPreviewUrl(attachment.dataUrl),
               }));
               const normalizedMessage: ChatMessage = {
                 id: message.id,

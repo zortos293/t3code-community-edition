@@ -32,6 +32,7 @@ import {
 } from "./ProjectionPipeline.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { ServerConfig, type ServerConfigShape } from "../../config.ts";
 
 const projectionLayer = it.layer(
   OrchestrationProjectionPipelineLive.pipe(
@@ -155,6 +156,94 @@ projectionLayer("OrchestrationProjectionPipeline", (it) => {
       for (const row of stateRows) {
         assert.equal(row.lastAppliedSequence, 3);
       }
+    }),
+  );
+
+  it.effect("materializes message image attachments into stateDir and stores URL references", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+      const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-projection-attachments-"));
+
+      const serverConfig = {
+        mode: "web",
+        port: 0,
+        host: undefined,
+        cwd: "/tmp/project-attachments",
+        keybindingsConfigPath: path.join(stateDir, "keybindings.json"),
+        stateDir,
+        staticDir: undefined,
+        devUrl: undefined,
+        noBrowser: true,
+        authToken: undefined,
+        autoBootstrapProjectFromCwd: false,
+        logWebSocketEvents: false,
+      } satisfies ServerConfigShape;
+
+      yield* eventStore.append({
+        type: "thread.message-sent",
+        eventId: EventId.makeUnsafe("evt-attachments"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-attachments"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-attachments"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-attachments"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-attachments"),
+          messageId: MessageId.makeUnsafe("message-attachments"),
+          role: "user",
+          text: "Inspect this",
+          attachments: [
+            {
+              type: "image",
+              name: "example.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+              dataUrl: "data:image/png;base64,SGVsbG8=",
+            },
+          ],
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* projectionPipeline.bootstrap.pipe(Effect.provideService(ServerConfig, serverConfig));
+
+      const rows = yield* sql<{
+        readonly attachmentsJson: string | null;
+      }>`
+        SELECT
+          attachments_json AS "attachmentsJson"
+        FROM projection_thread_messages
+        WHERE message_id = 'message-attachments'
+      `;
+      assert.equal(rows.length, 1);
+      assert.deepEqual(JSON.parse(rows[0]?.attachmentsJson ?? "null"), [
+        {
+          type: "image",
+          name: "example.png",
+          mimeType: "image/png",
+          sizeBytes: 5,
+          dataUrl: "/attachments/thread-attachments/message-attachments/0.png",
+        },
+      ]);
+
+      const attachmentPath = path.join(
+        stateDir,
+        "attachments",
+        "thread-attachments",
+        "message-attachments",
+        "0.png",
+      );
+      assert.equal(fs.existsSync(attachmentPath), true);
+      assert.deepEqual(fs.readFileSync(attachmentPath), Buffer.from("SGVsbG8=", "base64"));
+      fs.rmSync(stateDir, { recursive: true, force: true });
     }),
   );
 

@@ -18,6 +18,7 @@ import Migration0003 from "./Migrations/003_CheckpointDiffBlobs.ts";
 import Migration0004 from "./Migrations/004_ProviderSessionRuntime.ts";
 import Migration0005 from "./Migrations/005_Projections.ts";
 import Migration0006 from "./Migrations/006_ProjectionThreadSessionRuntimeModeColumns.ts";
+import Migration0007 from "./Migrations/007_ProjectionThreadMessageAttachments.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -36,6 +37,7 @@ const loader = Migrator.fromRecord({
   "4_ProviderSessionRuntime": Migration0004,
   "5_Projections": Migration0005,
   "6_ProjectionThreadSessionRuntimeModeColumns": Migration0006,
+  "7_ProjectionThreadMessageAttachments": Migration0007,
 });
 
 /**

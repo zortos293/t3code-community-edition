@@ -438,6 +438,24 @@ describe("WebSocket Server", () => {
     });
   });
 
+  it("serves persisted attachments from stateDir", async () => {
+    const stateDir = makeTempDir("t3code-state-attachments-");
+    const attachmentPath = path.join(stateDir, "attachments", "thread-a", "message-a", "0.png");
+    fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+    fs.writeFileSync(attachmentPath, Buffer.from("hello-attachment"));
+
+    server = await createTestServer({ cwd: "/test/project", stateDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await fetch(`http://127.0.0.1:${port}/attachments/thread-a/message-a/0.png`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("image/png");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    expect(bytes).toEqual(Buffer.from("hello-attachment"));
+  });
+
   it("bootstraps the cwd project on startup when enabled", async () => {
     server = await createTestServer({
       cwd: "/test/bootstrap-workspace",

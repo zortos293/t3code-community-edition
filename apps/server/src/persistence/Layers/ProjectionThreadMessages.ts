@@ -1,6 +1,7 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer, Schema, Struct } from "effect";
+import { Effect, Layer, Schema } from "effect";
+import { ChatAttachment } from "@t3tools/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
@@ -11,11 +12,11 @@ import {
   ProjectionThreadMessage,
 } from "../Services/ProjectionThreadMessages.ts";
 
-const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
-  Struct.assign({
-    isStreaming: Schema.Number,
-  }),
-);
+const ProjectionThreadMessageDbRowSchema = Schema.Struct({
+  ...ProjectionThreadMessage.fields,
+  isStreaming: Schema.Number,
+  attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
+});
 
 const makeProjectionThreadMessageRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -30,6 +31,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           turn_id,
           role,
           text,
+          attachments_json,
           is_streaming,
           created_at,
           updated_at
@@ -40,6 +42,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ${row.turnId},
           ${row.role},
           ${row.text},
+          ${row.attachments !== undefined ? JSON.stringify(row.attachments) : null},
           ${row.isStreaming ? 1 : 0},
           ${row.createdAt},
           ${row.updatedAt}
@@ -50,6 +53,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           turn_id = excluded.turn_id,
           role = excluded.role,
           text = excluded.text,
+          attachments_json = excluded.attachments_json,
           is_streaming = excluded.is_streaming,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at
@@ -67,6 +71,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           turn_id AS "turnId",
           role,
           text,
+          attachments_json AS "attachments",
           is_streaming AS "isStreaming",
           created_at AS "createdAt",
           updated_at AS "updatedAt"
@@ -97,8 +102,15 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
       ),
       Effect.map((rows) =>
         rows.map((row) => ({
-          ...row,
+          messageId: row.messageId,
+          threadId: row.threadId,
+          turnId: row.turnId,
+          role: row.role,
+          text: row.text,
           isStreaming: row.isStreaming === 1,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          ...(row.attachments !== null ? { attachments: row.attachments } : {}),
         })),
       ),
     );
