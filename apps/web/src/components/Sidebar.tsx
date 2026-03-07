@@ -1,5 +1,6 @@
 import {
   ChevronRightIcon,
+  Columns2Icon,
   FolderIcon,
   GitPullRequestIcon,
   RocketIcon,
@@ -17,7 +18,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL } from "../branding";
@@ -25,6 +26,7 @@ import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
 import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
 import { type Thread } from "../types";
+import { stripDiffSearchParams } from "../diffRouteSearch";
 import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -60,6 +62,14 @@ import {
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import {
+  MAX_SPLIT_PANES,
+  appendSplitPane,
+  buildPaneIds,
+  parseSplitViewRouteSearch,
+  removeSplitPane,
+  stripSplitSearchParams,
+} from "../splitViewRouteSearch";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -278,11 +288,61 @@ export default function Sidebar() {
     (store) => store.clearProjectDraftThreadById,
   );
   const navigate = useNavigate();
+  const currentSearch = useSearch({ strict: false });
+  const currentSplitParam = parseSplitViewRouteSearch(
+    currentSearch as Record<string, unknown>,
+  ).split;
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
+  const splitPaneIndexByThreadId = useMemo(() => {
+    const indexByThreadId = new Map<ThreadId, number>();
+    if (!routeThreadId) {
+      return indexByThreadId;
+    }
+    const paneIds = buildPaneIds(routeThreadId, currentSplitParam, MAX_SPLIT_PANES);
+    paneIds.forEach((paneId, index) => {
+      indexByThreadId.set(paneId, index + 1);
+    });
+    return indexByThreadId;
+  }, [currentSplitParam, routeThreadId]);
+  const handleOpenInSplitView = useCallback(
+    (splitThreadId: ThreadId) => {
+      if (!routeThreadId) {
+        void navigate({ to: "/$threadId", params: { threadId: splitThreadId } });
+        return;
+      }
+      if (splitThreadId === routeThreadId) return;
+      const newSplitParam = appendSplitPane(
+        routeThreadId,
+        currentSplitParam,
+        splitThreadId,
+        MAX_SPLIT_PANES,
+      );
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: routeThreadId },
+        search: (prev) => ({
+          ...prev,
+          ...(newSplitParam ? { split: newSplitParam } : {}),
+        }),
+      });
+    },
+    [navigate, routeThreadId, currentSplitParam],
+  );
+  const navigateToSingleThread = useCallback(
+    (nextThreadId: ThreadId, options?: { replace?: boolean }) => {
+      void navigate({
+        to: "/$threadId",
+        params: { threadId: nextThreadId },
+        ...(options?.replace ? { replace: true } : {}),
+        search: (previous) => stripSplitSearchParams(stripDiffSearchParams(previous)),
+      });
+    },
+    [navigate],
+  );
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
@@ -408,10 +468,7 @@ export default function Sidebar() {
           if (routeThreadId === storedDraftThread.threadId) {
             return;
           }
-          await navigate({
-            to: "/$threadId",
-            params: { threadId: storedDraftThread.threadId },
-          });
+          navigateToSingleThread(storedDraftThread.threadId);
         })();
       }
       clearProjectDraftThreadId(projectId);
@@ -439,17 +496,14 @@ export default function Sidebar() {
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
 
-        await navigate({
-          to: "/$threadId",
-          params: { threadId },
-        });
+        navigateToSingleThread(threadId);
       })();
     },
     [
       clearProjectDraftThreadId,
       getDraftThreadByProjectId,
-      navigate,
       getDraftThread,
+      navigateToSingleThread,
       routeThreadId,
       setDraftThreadContext,
       setProjectDraftThreadId,
@@ -467,12 +521,9 @@ export default function Sidebar() {
         })[0];
       if (!latestThread) return;
 
-      void navigate({
-        to: "/$threadId",
-        params: { threadId: latestThread.id },
-      });
+      navigateToSingleThread(latestThread.id);
     },
-    [navigate, threads],
+    [navigateToSingleThread, threads],
   );
 
   const addProjectFromPath = useCallback(
@@ -602,6 +653,7 @@ export default function Sidebar() {
         [
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
+          { id: "open-in-split", label: "Open in split view" },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
         ],
@@ -619,6 +671,10 @@ export default function Sidebar() {
 
       if (clicked === "mark-unread") {
         markThreadUnread(threadId);
+        return;
+      }
+      if (clicked === "open-in-split") {
+        handleOpenInSplitView(threadId);
         return;
       }
       if (clicked === "copy-thread-id") {
@@ -687,7 +743,10 @@ export default function Sidebar() {
         // Terminal may already be closed
       }
 
-      const shouldNavigateToFallback = routeThreadId === threadId;
+      const visiblePaneIds = routeThreadId
+        ? buildPaneIds(routeThreadId, currentSplitParam, MAX_SPLIT_PANES)
+        : [];
+      const shouldNavigateToFallback = visiblePaneIds.includes(threadId);
       const fallbackThreadId = threads.find((entry) => entry.id !== threadId)?.id ?? null;
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
@@ -698,12 +757,23 @@ export default function Sidebar() {
       clearProjectDraftThreadById(thread.projectId, thread.id);
       clearTerminalState(threadId);
       if (shouldNavigateToFallback) {
-        if (fallbackThreadId) {
+        const nextSplitRoute =
+          routeThreadId !== null ? removeSplitPane(routeThreadId, currentSplitParam, threadId) : null;
+        if (nextSplitRoute && nextSplitRoute.primaryId !== threadId) {
           void navigate({
             to: "/$threadId",
-            params: { threadId: fallbackThreadId },
+            params: { threadId: nextSplitRoute.primaryId },
             replace: true,
+            search: (previous) => {
+              const base =
+                nextSplitRoute.primaryId === routeThreadId
+                  ? stripSplitSearchParams(previous)
+                  : stripSplitSearchParams(stripDiffSearchParams(previous));
+              return nextSplitRoute.splitParam ? { ...base, split: nextSplitRoute.splitParam } : base;
+            },
           });
+        } else if (fallbackThreadId) {
+          navigateToSingleThread(fallbackThreadId, { replace: true });
         } else {
           void navigate({ to: "/", replace: true });
         }
@@ -739,8 +809,11 @@ export default function Sidebar() {
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalState,
+      currentSplitParam,
+      handleOpenInSplitView,
       markThreadUnread,
       navigate,
+      navigateToSingleThread,
       projects,
       removeWorktreeMutation,
       routeThreadId,
@@ -1112,6 +1185,7 @@ export default function Sidebar() {
                       <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
                         {visibleThreads.map((thread) => {
                           const isActive = routeThreadId === thread.id;
+                          const splitPaneIndex = splitPaneIndexByThreadId.get(thread.id);
                           const threadStatus = threadStatusPill(
                             thread,
                             pendingApprovalByThreadId.get(thread.id) === true,
@@ -1128,24 +1202,18 @@ export default function Sidebar() {
                                 render={<div role="button" tabIndex={0} />}
                                 size="sm"
                                 isActive={isActive}
-                                className={`h-7 w-full translate-x-0 cursor-default justify-start px-2 text-left hover:bg-accent hover:text-foreground ${
+                                className={`group/thread-row h-7 w-full translate-x-0 cursor-default justify-start px-2 text-left hover:bg-accent hover:text-foreground ${
                                   isActive
                                     ? "bg-accent/85 text-foreground font-medium ring-1 ring-border/70 dark:bg-accent/55 dark:ring-border/50"
                                     : "text-muted-foreground"
                                 }`}
                                 onClick={() => {
-                                  void navigate({
-                                    to: "/$threadId",
-                                    params: { threadId: thread.id },
-                                  });
+                                  navigateToSingleThread(thread.id);
                                 }}
                                 onKeyDown={(event) => {
                                   if (event.key !== "Enter" && event.key !== " ") return;
                                   event.preventDefault();
-                                  void navigate({
-                                    to: "/$threadId",
-                                    params: { threadId: thread.id },
-                                  });
+                                  navigateToSingleThread(thread.id);
                                 }}
                                 onContextMenu={(event) => {
                                   event.preventDefault();
@@ -1225,6 +1293,19 @@ export default function Sidebar() {
                                   )}
                                 </div>
                                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                  {splitPaneIndex ? (
+                                    <span
+                                      className={`inline-flex min-w-4 items-center justify-center rounded-full border px-1 text-[10px] font-semibold ${
+                                        isActive
+                                          ? "border-primary/35 bg-primary/14 text-primary"
+                                          : "border-primary/25 bg-primary/10 text-primary/85"
+                                      }`}
+                                      aria-label={`Split pane ${splitPaneIndex}`}
+                                      title={`Split pane ${splitPaneIndex}`}
+                                    >
+                                      {splitPaneIndex}
+                                    </span>
+                                  ) : null}
                                   {terminalStatus && (
                                     <span
                                       role="img"
@@ -1237,6 +1318,19 @@ export default function Sidebar() {
                                       />
                                     </span>
                                   )}
+                                  <button
+                                    type="button"
+                                    aria-label={`Open ${thread.title} in split view`}
+                                    title="Open in split view"
+                                    className="hidden size-4 items-center justify-center rounded text-muted-foreground/40 hover:bg-accent hover:text-muted-foreground group-hover/thread-row:inline-flex"
+                                    onClick={(event) => {
+                                      event.preventDefault();
+                                      event.stopPropagation();
+                                      handleOpenInSplitView(thread.id);
+                                    }}
+                                  >
+                                    <Columns2Icon className="size-3" />
+                                  </button>
                                   <span
                                     className={`text-[10px] ${
                                       isActive ? "text-foreground/65" : "text-muted-foreground/40"
