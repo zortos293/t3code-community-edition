@@ -501,6 +501,12 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(""),
   });
 
+  const assistantMessageSawDeltaByMessageId = yield* Cache.make<MessageId, boolean>({
+    capacity: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY,
+    timeToLive: BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL,
+    lookup: () => Effect.succeed(false),
+  });
+
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
@@ -592,6 +598,18 @@ const make = Effect.gen(function* () {
   const clearBufferedAssistantText = (messageId: MessageId) =>
     Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
 
+  const markAssistantMessageSawDelta = (messageId: MessageId) =>
+    Cache.set(assistantMessageSawDeltaByMessageId, messageId, true);
+
+  const takeAssistantMessageSawDelta = (messageId: MessageId) =>
+    Cache.getOption(assistantMessageSawDeltaByMessageId, messageId).pipe(
+      Effect.flatMap((existing) =>
+        Cache.invalidate(assistantMessageSawDeltaByMessageId, messageId).pipe(
+          Effect.as(Option.getOrElse(existing, () => false)),
+        ),
+      ),
+    );
+
   const appendBufferedProposedPlan = (planId: string, delta: string, createdAt: string) =>
     Cache.getOption(bufferedProposedPlanById, planId).pipe(
       Effect.flatMap((existingEntry) => {
@@ -615,7 +633,11 @@ const make = Effect.gen(function* () {
   const clearBufferedProposedPlan = (planId: string) =>
     Cache.invalidate(bufferedProposedPlanById, planId);
 
-  const clearAssistantMessageState = (messageId: MessageId) => clearBufferedAssistantText(messageId);
+  const clearAssistantMessageState = (messageId: MessageId) =>
+    Effect.all([
+      clearBufferedAssistantText(messageId),
+      Cache.invalidate(assistantMessageSawDeltaByMessageId, messageId),
+    ]).pipe(Effect.asVoid);
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -629,10 +651,11 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      const sawDelta = yield* takeAssistantMessageSawDelta(input.messageId);
       const text =
         bufferedText.length > 0
           ? bufferedText
-          : (input.fallbackText?.trim().length ?? 0) > 0
+          : !sawDelta && (input.fallbackText?.trim().length ?? 0) > 0
             ? input.fallbackText!
             : "";
 
@@ -881,6 +904,7 @@ const make = Effect.gen(function* () {
         if (turnId) {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
+        yield* markAssistantMessageSawDelta(assistantMessageId);
 
         const assistantDeliveryMode = yield* Ref.get(assistantDeliveryModeRef);
         if (assistantDeliveryMode === "buffered") {

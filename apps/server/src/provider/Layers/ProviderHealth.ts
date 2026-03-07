@@ -19,6 +19,7 @@ import { Effect, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
+import { resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CODEX_PROVIDER = "codex" as const;
@@ -315,7 +316,11 @@ export const checkCopilotProviderStatus: Effect.Effect<ServerProviderStatus> = E
     const checkedAt = new Date().toISOString();
     const probe = yield* Effect.tryPromise({
       try: async () => {
-        const client = new CopilotClient({ logLevel: "error" });
+        const cliPath = resolveBundledCopilotCliPath();
+        const client = new CopilotClient({
+          ...(cliPath ? { cliPath } : {}),
+          logLevel: "error",
+        });
         try {
           await client.start();
           const [status, authStatus] = await Promise.all([

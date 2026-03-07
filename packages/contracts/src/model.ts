@@ -34,6 +34,7 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     { slug: "gpt-5.2", name: "GPT-5.2" },
   ],
   copilot: [
+    { slug: "gpt-5.4", name: "GPT-5.4" },
     { slug: "claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
     { slug: "claude-sonnet-4.5", name: "Claude Sonnet 4.5" },
     { slug: "claude-haiku-4.5", name: "Claude Haiku 4.5" },
@@ -73,6 +74,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER = {
   },
   copilot: {
     "4.1": "gpt-4.1",
+    "5.4": "gpt-5.4",
     "5-mini": "gpt-5-mini",
     "5.1": "gpt-5.1",
     "5.1-codex": "gpt-5.1-codex",

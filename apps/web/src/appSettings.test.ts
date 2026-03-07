@@ -57,6 +57,7 @@ describe("getAppModelOptions", () => {
   it("returns the built-in Copilot options for the Copilot provider", () => {
     const options = getAppModelOptions("copilot", []);
 
+    expect(options.map((option) => option.slug)).toContain("gpt-5.4");
     expect(options.map((option) => option.slug)).toContain("gpt-5.3-codex");
     expect(options.map((option) => option.slug)).toContain("claude-sonnet-4.6");
     expect(options.map((option) => option.slug)).toContain("gemini-3-pro-preview");
