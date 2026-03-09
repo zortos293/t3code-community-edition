@@ -18,6 +18,7 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
+  { value: "copilot", label: "GitHub Copilot", available: true },
   { value: "claudeCode", label: "Claude Code", available: false },
   { value: "cursor", label: "Cursor", available: false },
 ];
@@ -30,6 +31,16 @@ export interface WorkLogEntry {
   command?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
+  activityKind: OrchestrationThreadActivity["kind"];
+  itemType?:
+    | "command_execution"
+    | "file_change"
+    | "mcp_tool_call"
+    | "dynamic_tool_call"
+    | "collab_agent_tool_call"
+    | "web_search"
+    | "image_view";
+  requestKind?: PendingApproval["requestKind"];
 }
 
 export interface PendingApproval {
@@ -405,10 +416,12 @@ export function findLatestProposedPlan(
 export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
+  sinceCreatedAt?: string,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
   return ordered
-    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId : true))
+    .filter((activity) => (latestTurnId ? activity.turnId === latestTurnId || activity.turnId === null : true))
+    .filter((activity) => (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true))
     .filter((activity) => activity.kind !== "tool.started")
     .filter((activity) => activity.kind !== "task.started" && activity.kind !== "task.completed")
     .filter((activity) => activity.summary !== "Checkpoint captured")
@@ -424,7 +437,10 @@ export function deriveWorkLogEntries(
         createdAt: activity.createdAt,
         label: activity.summary,
         tone: activity.tone === "approval" ? "info" : activity.tone,
+        activityKind: activity.kind,
       };
+      const itemType = extractWorkLogItemType(payload);
+      const requestKind = extractWorkLogRequestKind(payload);
       if (payload && typeof payload.detail === "string" && payload.detail.length > 0) {
         entry.detail = payload.detail;
       }
@@ -433,6 +449,12 @@ export function deriveWorkLogEntries(
       }
       if (changedFiles.length > 0) {
         entry.changedFiles = changedFiles;
+      }
+      if (itemType) {
+        entry.itemType = itemType;
+      }
+      if (requestKind) {
+        entry.requestKind = requestKind;
       }
       return entry;
     });
@@ -476,6 +498,34 @@ function extractToolCommand(payload: Record<string, unknown> | null): string | n
     normalizeCommandValue(data?.command),
   ];
   return candidates.find((candidate) => candidate !== null) ?? null;
+}
+
+function extractWorkLogItemType(payload: Record<string, unknown> | null): WorkLogEntry["itemType"] | undefined {
+  switch (payload?.itemType) {
+    case "command_execution":
+    case "file_change":
+    case "mcp_tool_call":
+    case "dynamic_tool_call":
+    case "collab_agent_tool_call":
+    case "web_search":
+    case "image_view":
+      return payload.itemType;
+    default:
+      return undefined;
+  }
+}
+
+function extractWorkLogRequestKind(
+  payload: Record<string, unknown> | null,
+): WorkLogEntry["requestKind"] | undefined {
+  if (
+    payload?.requestKind === "command" ||
+    payload?.requestKind === "file-read" ||
+    payload?.requestKind === "file-change"
+  ) {
+    return payload.requestKind;
+  }
+  return requestKindFromRequestType(payload?.requestType) ?? undefined;
 }
 
 function pushChangedFile(target: string[], seen: Set<string>, value: unknown) {
@@ -570,6 +620,16 @@ export function hasToolActivityForTurn(
 ): boolean {
   if (!turnId) return false;
   return activities.some((activity) => activity.turnId === turnId && activity.tone === "tool");
+}
+
+export function hasToolActivitySince(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  sinceCreatedAt: string | undefined,
+): boolean {
+  return activities.some(
+    (activity) =>
+      activity.tone === "tool" && (sinceCreatedAt ? activity.createdAt >= sinceCreatedAt : true),
+  );
 }
 
 export function deriveTimelineEntries(

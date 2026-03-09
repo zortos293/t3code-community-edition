@@ -23,8 +23,9 @@ export interface AppState {
   threadsHydrated: boolean;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v9";
 const LEGACY_PERSISTED_STATE_KEYS = [
+  "t3code:renderer-state:v8",
   "t3code:renderer-state:v7",
   "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
@@ -42,6 +43,7 @@ const initialState: AppState = {
   threadsHydrated: false,
 };
 const persistedExpandedProjectCwds = new Set<string>();
+const persistedProjectOrderCwds: string[] = [];
 
 // ── Persist helpers ──────────────────────────────────────────────────
 
@@ -50,11 +52,20 @@ function readPersistedState(): AppState {
   try {
     const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
     if (!raw) return initialState;
-    const parsed = JSON.parse(raw) as { expandedProjectCwds?: string[] };
+    const parsed = JSON.parse(raw) as {
+      expandedProjectCwds?: string[];
+      projectOrderCwds?: string[];
+    };
     persistedExpandedProjectCwds.clear();
+    persistedProjectOrderCwds.length = 0;
     for (const cwd of parsed.expandedProjectCwds ?? []) {
       if (typeof cwd === "string" && cwd.length > 0) {
         persistedExpandedProjectCwds.add(cwd);
+      }
+    }
+    for (const cwd of parsed.projectOrderCwds ?? []) {
+      if (typeof cwd === "string" && cwd.length > 0) {
+        persistedProjectOrderCwds.push(cwd);
       }
     }
     return { ...initialState };
@@ -72,6 +83,7 @@ function persistState(state: AppState): void {
         expandedProjectCwds: state.projects
           .filter((project) => project.expanded)
           .map((project) => project.cwd),
+        projectOrderCwds: state.projects.map((project) => project.cwd),
       }),
     );
     for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
@@ -83,6 +95,44 @@ function persistState(state: AppState): void {
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────
+
+function compareOptionalOrder(left: number | undefined, right: number | undefined): number {
+  if (left === undefined && right === undefined) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return left - right;
+}
+
+function orderProjects(
+  projects: Project[],
+  previous: Project[],
+  incoming: OrchestrationReadModel["projects"],
+): Project[] {
+  const persistedOrderByCwd = new Map(
+    persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
+  );
+  const previousOrderById = new Map(previous.map((project, index) => [project.id, index] as const));
+  const previousOrderByCwd = new Map(previous.map((project, index) => [project.cwd, index] as const));
+  const incomingOrderById = new Map(incoming.map((project, index) => [project.id, index] as const));
+
+  return projects.toSorted((left, right) => {
+    const persistedComparison = compareOptionalOrder(
+      persistedOrderByCwd.get(left.cwd),
+      persistedOrderByCwd.get(right.cwd),
+    );
+    if (persistedComparison !== 0) return persistedComparison;
+
+    const previousComparison = compareOptionalOrder(
+      previousOrderById.get(left.id) ?? previousOrderByCwd.get(left.cwd),
+      previousOrderById.get(right.id) ?? previousOrderByCwd.get(right.cwd),
+    );
+    if (previousComparison !== 0) return previousComparison;
+
+    return (
+      incomingOrderById.get(left.id) ?? Number.POSITIVE_INFINITY
+    ) - (incomingOrderById.get(right.id) ?? Number.POSITIVE_INFINITY);
+  });
+}
 
 function updateThread(
   threads: Thread[],
@@ -103,7 +153,7 @@ function mapProjectsFromReadModel(
   incoming: OrchestrationReadModel["projects"],
   previous: Project[],
 ): Project[] {
-  return incoming.map((project) => {
+  const projects = incoming.map((project) => {
     const existing =
       previous.find((entry) => entry.id === project.id) ??
       previous.find((entry) => entry.cwd === project.workspaceRoot);
@@ -122,6 +172,7 @@ function mapProjectsFromReadModel(
       scripts: project.scripts.map((script) => ({ ...script })),
     };
   });
+  return orderProjects(projects, previous, incoming);
 }
 
 function toLegacySessionStatus(
@@ -144,20 +195,32 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex") {
+  if (providerName === "codex" || providerName === "copilot") {
     return providerName;
   }
   return "codex";
 }
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
+const COPILOT_MODEL_SLUGS = new Set<string>(getModelOptions("copilot").map((option) => option.slug));
+const AMBIGUOUS_PROVIDER_MODEL_SLUGS = new Set(
+  [...CODEX_MODEL_SLUGS].filter((slug) => COPILOT_MODEL_SLUGS.has(slug)),
+);
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex") {
+  if (input.sessionProviderName === "codex" || input.sessionProviderName === "copilot") {
     return input.sessionProviderName;
+  }
+  const normalizedCopilot = normalizeModelSlug(input.model, "copilot");
+  if (
+    normalizedCopilot &&
+    COPILOT_MODEL_SLUGS.has(normalizedCopilot) &&
+    !AMBIGUOUS_PROVIDER_MODEL_SLUGS.has(normalizedCopilot)
+  ) {
+    return "copilot";
   }
   const normalizedCodex = normalizeModelSlug(input.model, "codex");
   if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {
@@ -210,18 +273,20 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
+      const inferredProvider = inferProviderForThreadModel({
+        model: thread.model,
+        sessionProviderName: thread.session?.providerName ?? null,
+      });
+      const normalizedKnownProviderModel = normalizeModelSlug(thread.model, inferredProvider);
       return {
         id: thread.id,
         codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
-        model: resolveModelSlugForProvider(
-          inferProviderForThreadModel({
-            model: thread.model,
-            sessionProviderName: thread.session?.providerName ?? null,
-          }),
-          thread.model,
-        ),
+        model:
+          thread.session?.providerName === "copilot"
+            ? (normalizedKnownProviderModel ?? thread.model)
+            : resolveModelSlugForProvider(inferredProvider, thread.model),
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
         session: thread.session
@@ -342,6 +407,25 @@ export function setProjectExpanded(
   return changed ? { ...state, projects } : state;
 }
 
+export function reorderProject(
+  state: AppState,
+  projectId: Project["id"],
+  targetIndex: number,
+): AppState {
+  const currentIndex = state.projects.findIndex((project) => project.id === projectId);
+  if (currentIndex < 0) return state;
+
+  const projects = state.projects.slice();
+  const [project] = projects.splice(currentIndex, 1);
+  if (!project) return state;
+  const boundedTargetIndex = Math.max(0, Math.min(targetIndex, projects.length));
+  if (boundedTargetIndex === currentIndex) {
+    return state;
+  }
+  projects.splice(boundedTargetIndex, 0, project);
+  return { ...state, projects };
+}
+
 export function setError(state: AppState, threadId: ThreadId, error: string | null): AppState {
   const threads = updateThread(state.threads, threadId, (t) => {
     if (t.error === error) return t;
@@ -376,6 +460,7 @@ interface AppStore extends AppState {
   markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
   markThreadUnread: (threadId: ThreadId) => void;
   toggleProject: (projectId: Project["id"]) => void;
+  reorderProject: (projectId: Project["id"], targetIndex: number) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
@@ -388,6 +473,8 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId) => set((state) => markThreadUnread(state, threadId)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
+  reorderProject: (projectId, targetIndex) =>
+    set((state) => reorderProject(state, projectId, targetIndex)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),

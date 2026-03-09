@@ -220,8 +220,8 @@ jobs:
           path: release-publish/*
           if-no-files-found: error
 
-  publish_cli:
-    name: Publish CLI to npm
+  release:
+    name: Publish GitHub Release
     needs: [preflight, build]
     runs-on: ubuntu-24.04
     steps:
@@ -239,31 +239,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: package.json
-          registry-url: https://registry.npmjs.org
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Build CLI package
-        run: bun run build --filter=@t3tools/web --filter=t3
-
-      - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag latest --app-version "${{ needs.preflight.outputs.version }}" --verbose
-
-  release:
-    name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.preflight.outputs.ref }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: package.json
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v4
@@ -274,28 +249,39 @@ jobs:
 
       - name: Merge macOS updater manifests
         run: |
-          node scripts/merge-mac-update-manifests.ts \
+          bun scripts/merge-mac-update-manifests.ts \
             release-assets/latest-mac.yml \
             release-assets/latest-mac-x64.yml
           rm -f release-assets/latest-mac-x64.yml
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.preflight.outputs.tag }}
-          target_commitish: ${{ needs.preflight.outputs.ref }}
-          name: T3 Code v${{ needs.preflight.outputs.version }}
-          generate_release_notes: true
-          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
-          make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(
+            "${{ needs.preflight.outputs.tag }}"
+            --target "${{ needs.preflight.outputs.ref }}"
+            --title "T3 Code v${{ needs.preflight.outputs.version }}"
+            --generate-notes
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/latest*.yml
-          fail_on_unmatched_files: true
+          )
+
+          if [[ "${{ needs.preflight.outputs.is_prerelease }}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          if [[ "${{ needs.preflight.outputs.make_latest }}" == "true" ]]; then
+            args+=(--latest)
+          else
+            args+=(--latest=false)
+          fi
+
+          gh release create "${args[@]}"
 
   finalize:
     name: Finalize release
