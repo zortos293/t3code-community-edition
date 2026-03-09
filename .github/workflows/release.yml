@@ -255,22 +255,34 @@ jobs:
           rm -f release-assets/latest-mac-x64.yml
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.preflight.outputs.tag }}
-          target_commitish: ${{ needs.preflight.outputs.ref }}
-          name: T3 Code v${{ needs.preflight.outputs.version }}
-          generate_release_notes: true
-          prerelease: ${{ needs.preflight.outputs.is_prerelease }}
-          make_latest: ${{ needs.preflight.outputs.make_latest }}
-          files: |
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(
+            "${{ needs.preflight.outputs.tag }}"
+            --target "${{ needs.preflight.outputs.ref }}"
+            --title "T3 Code v${{ needs.preflight.outputs.version }}"
+            --generate-notes
+            --verify-tag
             release-assets/*.dmg
             release-assets/*.zip
             release-assets/*.AppImage
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/latest*.yml
-          fail_on_unmatched_files: true
+          )
+
+          if [[ "${{ needs.preflight.outputs.is_prerelease }}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+
+          if [[ "${{ needs.preflight.outputs.make_latest }}" == "true" ]]; then
+            args+=(--latest)
+          else
+            args+=(--latest=false)
+          fi
+
+          gh release create "${args[@]}"
 
   finalize:
     name: Finalize release
