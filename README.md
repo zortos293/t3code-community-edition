@@ -6,11 +6,10 @@ T3 Code is a minimal web GUI for coding agents. This fork supports both Codex an
 
 ## Preview
 
-Add a screenshot or GIF here.
+<img width="1792" height="1001" alt="2026-03-09_02-36-10" src="https://github.com/user-attachments/assets/2d2bb48f-1485-44e0-804e-468f4111d376" />
 
-<!-- Example:
-![T3 Code + Copilot preview](./docs/images/t3code-copilot-preview.png)
--->
+<img width="1795" height="998" alt="image" src="https://github.com/user-attachments/assets/946b538f-cf27-4a63-a623-725f4ac7ecb0" />
+
 
 ## This fork
 
