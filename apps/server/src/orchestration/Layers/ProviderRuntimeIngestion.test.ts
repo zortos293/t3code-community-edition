@@ -851,6 +851,97 @@ describe("ProviderRuntimeIngestion", () => {
     expect(finalMessage?.streaming).toBe(false);
   });
 
+  it("completes streaming assistant messages even when read model lookup lags completion", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-streaming-lag"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("message-streaming-lag"),
+          role: "user",
+          text: "stream with lag",
+          attachments: [],
+        },
+        assistantDeliveryMode: "streaming",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(Effect.sleep("30 millis"));
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-streaming-lag"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-lag"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-streaming-lag",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-streaming-lag"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-lag"),
+      itemId: asItemId("item-streaming-lag"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello lagged",
+      },
+    });
+
+    const liveThread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-lag" &&
+          message.streaming &&
+          message.text === "hello lagged",
+      ),
+    );
+    const liveMessage = liveThread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-streaming-lag",
+    );
+    expect(liveMessage?.streaming).toBe(true);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-streaming-lag"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-streaming-lag"),
+      itemId: asItemId("item-streaming-lag"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const finalThread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === "assistant:item-streaming-lag" && !message.streaming,
+      ),
+    );
+    const finalMessage = finalThread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-streaming-lag",
+    );
+    expect(finalMessage?.text).toBe("hello lagged");
+    expect(finalMessage?.streaming).toBe(false);
+  });
+
   it("spills oversized buffered deltas and still finalizes full assistant text", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
