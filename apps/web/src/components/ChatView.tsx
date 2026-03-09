@@ -133,22 +133,14 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
-  DatabaseIcon,
-  EyeIcon,
   FileIcon,
   FolderIcon,
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
-  HammerIcon,
   LockIcon,
   LockOpenIcon,
-  SearchIcon,
-  SquarePenIcon,
-  TargetIcon,
-  TerminalIcon,
   Undo2Icon,
-  WrenchIcon,
   XIcon,
   CopyIcon,
   CheckIcon,
@@ -304,87 +296,6 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   if (tone === "tool") return "text-foreground/80";
   if (tone === "thinking") return "text-foreground/70";
   return "text-muted-foreground/80";
-}
-
-function workToneIcon(tone: "thinking" | "tool" | "info" | "error") {
-  if (tone === "error") {
-    return {
-      icon: CircleAlertIcon,
-      className: "text-black/85 dark:text-white/90",
-    };
-  }
-  if (tone === "thinking") {
-    return {
-      icon: BotIcon,
-      className: "text-black/85 dark:text-white/90",
-    };
-  }
-  if (tone === "info") {
-    return {
-      icon: CheckIcon,
-      className: "text-black/85 dark:text-white/90",
-    };
-  }
-  return {
-    icon: ZapIcon,
-    className: "text-black/85 dark:text-white/90",
-  };
-}
-
-function workEntryPreview(workEntry: {
-  detail?: string;
-  command?: string;
-  changedFiles?: ReadonlyArray<string>;
-}): string | null {
-  if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
-  if ((workEntry.changedFiles?.length ?? 0) > 0) {
-    const [firstPath] = workEntry.changedFiles ?? [];
-    if (!firstPath) return null;
-    return workEntry.changedFiles!.length === 1
-      ? firstPath
-      : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
-  }
-  return null;
-}
-
-function workEntryIcon(workEntry: {
-  label: string;
-  detail?: string;
-  command?: string;
-  tone: "thinking" | "tool" | "info" | "error";
-}) {
-  const haystack = [workEntry.label, workEntry.detail, workEntry.command]
-    .filter((value): value is string => typeof value === "string" && value.length > 0)
-    .join(" ")
-    .toLowerCase();
-
-  if (haystack.includes("report_intent") || haystack.includes("intent logged")) {
-    return TargetIcon;
-  }
-  if (
-    haystack.includes("bash") ||
-    haystack.includes("read_bash") ||
-    haystack.includes("write_bash") ||
-    haystack.includes("stop_bash") ||
-    haystack.includes("list_bash")
-  ) {
-    return TerminalIcon;
-  }
-  if (haystack.includes("sql")) return DatabaseIcon;
-  if (haystack.includes("view")) return EyeIcon;
-  if (haystack.includes("apply_patch")) return SquarePenIcon;
-  if (haystack.includes("rg") || haystack.includes("glob") || haystack.includes("search")) {
-    return SearchIcon;
-  }
-  if (haystack.includes("task")) return HammerIcon;
-  if (haystack.includes("skill")) return ZapIcon;
-  if (haystack.includes("ask_user") || haystack.includes("approval")) return BotIcon;
-  if (haystack.includes("store_memory")) return FolderIcon;
-  if (haystack.includes("edit") || haystack.includes("patch")) return WrenchIcon;
-  if (haystack.includes("file")) return FileIcon;
-
-  return workToneIcon(workEntry.tone).icon;
 }
 
 function normalizePlanMarkdownForExport(planMarkdown: string): string {
@@ -1296,26 +1207,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     return byUserMessageId;
   }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
-  const completionSummary = useMemo(() => {
-    if (!latestTurnSettled) return null;
-    if (!activeLatestTurn?.startedAt) return null;
-    if (!activeLatestTurn.completedAt) return null;
-    if (!latestTurnHasToolActivity) return null;
-
-    const elapsed = formatElapsed(activeLatestTurn.startedAt, activeLatestTurn.completedAt);
-    return elapsed ? `Worked for ${elapsed}` : null;
-  }, [
-    activeLatestTurn?.completedAt,
-    activeLatestTurn?.startedAt,
-    latestTurnHasToolActivity,
-    latestTurnSettled,
-  ]);
-
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!latestTurnSettled) return null;
     if (!activeLatestTurn?.startedAt) return null;
     if (!activeLatestTurn.completedAt) return null;
-    if (!completionSummary) return null;
+    if (!latestTurnHasToolActivity) return null;
 
     const turnStartedAt = Date.parse(activeLatestTurn.startedAt);
     const turnCompletedAt = Date.parse(activeLatestTurn.completedAt);
@@ -1338,7 +1234,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeLatestTurn?.completedAt,
     activeLatestTurn?.startedAt,
-    completionSummary,
+    latestTurnHasToolActivity,
     latestTurnSettled,
     timelineEntries,
   ]);
@@ -5154,16 +5050,16 @@ const MessagesTimeline = memo(function MessagesTimeline({
           const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
 
           return (
-            <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
+            <div className="rounded-lg border border-border/80 bg-card/45 px-3 py-2">
               {showHeader && (
-                <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-                  <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
-                    {groupLabel} ({groupedEntries.length})
+                <div className="mb-1.5 flex items-center justify-between gap-3">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/65">
+                    {groupLabel}
                   </p>
                   {hasOverflow && (
                     <button
                       type="button"
-                      className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+                      className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-muted-foreground/80"
                       onClick={() => onToggleWorkGroup(groupId)}
                     >
                       {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
@@ -5171,74 +5067,49 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   )}
                 </div>
               )}
-              <div className="space-y-0.5">
-                {visibleEntries.map((workEntry, workEntryIndex) => {
-                  const iconConfig = workToneIcon(workEntry.tone);
-                  const EntryIcon = workEntryIcon(workEntry);
-                  const preview = workEntryPreview(workEntry);
-                  const displayText = preview ? `${workEntry.label} - ${preview}` : workEntry.label;
-                  const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
-                  const previewIsChangedFiles =
-                    hasChangedFiles && !workEntry.command && !workEntry.detail;
-                  return (
-                    <div
-                      key={`work-row:${workEntry.id}`}
-                      className="animate-in fade-in slide-in-from-bottom-1 rounded-lg px-1 py-1 duration-200"
-                      style={{
-                        animationDelay: `${Math.min(workEntryIndex, 4) * 40}ms`,
-                      }}
-                    >
-                      <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
-                        <span
-                          className={cn(
-                            "flex size-5 shrink-0 items-center justify-center",
-                            iconConfig.className,
-                          )}
-                        >
-                          <EntryIcon className="size-3" />
-                        </span>
-                        <div className="min-w-0 flex-1 overflow-hidden animate-in fade-in duration-300">
-                          <p
-                            className={cn(
-                              "truncate text-[11px] leading-5",
-                              workToneClass(workEntry.tone),
-                              preview ? "text-muted-foreground/70" : "",
-                            )}
-                            title={displayText}
-                          >
-                            <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                              {workEntry.label}
-                            </span>
-                            {preview && (
-                              <span className="text-muted-foreground/55"> - {preview}</span>
-                            )}
-                          </p>
-                        </div>
-                        <span className="shrink-0 text-[9px] text-muted-foreground/35">
-                          {formatTimestamp(workEntry.createdAt)}
-                        </span>
-                      </div>
-                      {hasChangedFiles && !previewIsChangedFiles && (
-                        <div className="animate-in fade-in slide-in-from-bottom-1 mt-1 flex flex-wrap gap-1 pl-6 duration-200">
-                          {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
+              <div className="space-y-1">
+                {visibleEntries.map((workEntry) => (
+                  <div key={`work-row:${workEntry.id}`} className="flex items-start gap-2 py-0.5">
+                    <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-muted-foreground/30" />
+                    <div className="min-w-0 flex-1 py-[2px]">
+                      <p className={`text-[11px] leading-relaxed ${workToneClass(workEntry.tone)}`}>
+                        {workEntry.label}
+                      </p>
+                      {workEntry.command && (
+                        <pre className="mt-1 overflow-x-auto rounded-md border border-border/70 bg-background/80 px-2 py-1 font-mono text-[11px] leading-relaxed text-foreground/80">
+                          {workEntry.command}
+                        </pre>
+                      )}
+                      {workEntry.changedFiles && workEntry.changedFiles.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {workEntry.changedFiles.slice(0, 6).map((filePath) => (
                             <span
                               key={`${workEntry.id}:${filePath}`}
-                              className="rounded-md border border-border/55 bg-background/55 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+                              className="rounded-md border border-border/70 bg-background/65 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/85"
                               title={filePath}
                             >
                               {filePath}
                             </span>
                           ))}
-                          {(workEntry.changedFiles?.length ?? 0) > 4 && (
-                            <span className="px-1 text-[10px] text-muted-foreground/55">
-                              +{(workEntry.changedFiles?.length ?? 0) - 4}
+                          {workEntry.changedFiles.length > 6 && (
+                            <span className="px-1 text-[10px] text-muted-foreground/65">
+                              +{workEntry.changedFiles.length - 6} more
                             </span>
                           )}
                         </div>
                       )}
+                      {workEntry.detail &&
+                        (!workEntry.command || workEntry.detail !== workEntry.command) && (
+                          <p
+                            className="mt-1 text-[11px] leading-relaxed text-muted-foreground/75"
+                            title={workEntry.detail}
+                          >
+                            {workEntry.detail}
+                          </p>
+                        )}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
           );
@@ -5327,12 +5198,11 @@ const MessagesTimeline = memo(function MessagesTimeline({
             <>
               {row.showCompletionDivider && (
                 <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border/80" />
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/90 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground/80 shadow-sm">
-                    <BotIcon className="size-3" />
-                    Assistant response
+                  <span className="h-px flex-1 bg-border" />
+                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
+                    Response
                   </span>
-                  <span className="h-px flex-1 bg-border/80" />
+                  <span className="h-px flex-1 bg-border" />
                 </div>
               )}
               <div className="min-w-0 px-1 py-0.5">
