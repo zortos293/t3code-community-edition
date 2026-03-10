@@ -14,6 +14,7 @@ import {
 } from "@t3tools/shared/model";
 import { create } from "zustand";
 import { type ChatMessage, type Project, type Thread } from "./types";
+import { Debouncer } from "@tanstack/react-pacer";
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -23,9 +24,8 @@ export interface AppState {
   threadsHydrated: boolean;
 }
 
-const PERSISTED_STATE_KEY = "t3code:renderer-state:v9";
+const PERSISTED_STATE_KEY = "t3code:renderer-state:v8";
 const LEGACY_PERSISTED_STATE_KEYS = [
-  "t3code:renderer-state:v8",
   "t3code:renderer-state:v7",
   "t3code:renderer-state:v6",
   "t3code:renderer-state:v5",
@@ -64,7 +64,7 @@ function readPersistedState(): AppState {
       }
     }
     for (const cwd of parsed.projectOrderCwds ?? []) {
-      if (typeof cwd === "string" && cwd.length > 0) {
+      if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwds.includes(cwd)) {
         persistedProjectOrderCwds.push(cwd);
       }
     }
@@ -73,6 +73,8 @@ function readPersistedState(): AppState {
     return initialState;
   }
 }
+
+let legacyKeysCleanedUp = false;
 
 function persistState(state: AppState): void {
   if (typeof window === "undefined") return;
@@ -86,53 +88,19 @@ function persistState(state: AppState): void {
         projectOrderCwds: state.projects.map((project) => project.cwd),
       }),
     );
-    for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
-      window.localStorage.removeItem(legacyKey);
+    if (!legacyKeysCleanedUp) {
+      legacyKeysCleanedUp = true;
+      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+        window.localStorage.removeItem(legacyKey);
+      }
     }
   } catch {
     // Ignore quota/storage errors to avoid breaking chat UX.
   }
 }
+const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
 
 // ── Pure helpers ──────────────────────────────────────────────────────
-
-function compareOptionalOrder(left: number | undefined, right: number | undefined): number {
-  if (left === undefined && right === undefined) return 0;
-  if (left === undefined) return 1;
-  if (right === undefined) return -1;
-  return left - right;
-}
-
-function orderProjects(
-  projects: Project[],
-  previous: Project[],
-  incoming: OrchestrationReadModel["projects"],
-): Project[] {
-  const persistedOrderByCwd = new Map(
-    persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
-  );
-  const previousOrderById = new Map(previous.map((project, index) => [project.id, index] as const));
-  const previousOrderByCwd = new Map(previous.map((project, index) => [project.cwd, index] as const));
-  const incomingOrderById = new Map(incoming.map((project, index) => [project.id, index] as const));
-
-  return projects.toSorted((left, right) => {
-    const persistedComparison = compareOptionalOrder(
-      persistedOrderByCwd.get(left.cwd),
-      persistedOrderByCwd.get(right.cwd),
-    );
-    if (persistedComparison !== 0) return persistedComparison;
-
-    const previousComparison = compareOptionalOrder(
-      previousOrderById.get(left.id) ?? previousOrderByCwd.get(left.cwd),
-      previousOrderById.get(right.id) ?? previousOrderByCwd.get(right.cwd),
-    );
-    if (previousComparison !== 0) return previousComparison;
-
-    return (
-      incomingOrderById.get(left.id) ?? Number.POSITIVE_INFINITY
-    ) - (incomingOrderById.get(right.id) ?? Number.POSITIVE_INFINITY);
-  });
-}
 
 function updateThread(
   threads: Thread[],
@@ -153,10 +121,19 @@ function mapProjectsFromReadModel(
   incoming: OrchestrationReadModel["projects"],
   previous: Project[],
 ): Project[] {
-  const projects = incoming.map((project) => {
-    const existing =
-      previous.find((entry) => entry.id === project.id) ??
-      previous.find((entry) => entry.cwd === project.workspaceRoot);
+  const previousById = new Map(previous.map((project) => [project.id, project] as const));
+  const previousByCwd = new Map(previous.map((project) => [project.cwd, project] as const));
+  const previousOrderById = new Map(previous.map((project, index) => [project.id, index] as const));
+  const previousOrderByCwd = new Map(
+    previous.map((project, index) => [project.cwd, index] as const),
+  );
+  const persistedOrderByCwd = new Map(
+    persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
+  );
+  const usePersistedOrder = previous.length === 0;
+
+  const mappedProjects = incoming.map((project) => {
+    const existing = previousById.get(project.id) ?? previousByCwd.get(project.workspaceRoot);
     return {
       id: project.id,
       name: project.title,
@@ -170,9 +147,26 @@ function mapProjectsFromReadModel(
           ? persistedExpandedProjectCwds.has(project.workspaceRoot)
           : true),
       scripts: project.scripts.map((script) => ({ ...script })),
-    };
+    } satisfies Project;
   });
-  return orderProjects(projects, previous, incoming);
+
+  return mappedProjects
+    .map((project, incomingIndex) => {
+      const previousIndex =
+        previousOrderById.get(project.id) ?? previousOrderByCwd.get(project.cwd);
+      const persistedIndex = usePersistedOrder ? persistedOrderByCwd.get(project.cwd) : undefined;
+      const orderIndex =
+        previousIndex ??
+        persistedIndex ??
+        (usePersistedOrder ? persistedProjectOrderCwds.length : previous.length) + incomingIndex;
+      return { project, incomingIndex, orderIndex };
+    })
+    .toSorted((a, b) => {
+      const byOrder = a.orderIndex - b.orderIndex;
+      if (byOrder !== 0) return byOrder;
+      return a.incomingIndex - b.incomingIndex;
+    })
+    .map((entry) => entry.project);
 }
 
 function toLegacySessionStatus(
@@ -203,9 +197,6 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
 
 const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) => option.slug));
 const COPILOT_MODEL_SLUGS = new Set<string>(getModelOptions("copilot").map((option) => option.slug));
-const AMBIGUOUS_PROVIDER_MODEL_SLUGS = new Set(
-  [...CODEX_MODEL_SLUGS].filter((slug) => COPILOT_MODEL_SLUGS.has(slug)),
-);
 
 function inferProviderForThreadModel(input: {
   readonly model: string;
@@ -215,11 +206,7 @@ function inferProviderForThreadModel(input: {
     return input.sessionProviderName;
   }
   const normalizedCopilot = normalizeModelSlug(input.model, "copilot");
-  if (
-    normalizedCopilot &&
-    COPILOT_MODEL_SLUGS.has(normalizedCopilot) &&
-    !AMBIGUOUS_PROVIDER_MODEL_SLUGS.has(normalizedCopilot)
-  ) {
+  if (normalizedCopilot && COPILOT_MODEL_SLUGS.has(normalizedCopilot)) {
     return "copilot";
   }
   const normalizedCodex = normalizeModelSlug(input.model, "codex");
@@ -273,20 +260,18 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
     .filter((thread) => thread.deletedAt === null)
     .map((thread) => {
       const existing = existingThreadById.get(thread.id);
-      const inferredProvider = inferProviderForThreadModel({
-        model: thread.model,
-        sessionProviderName: thread.session?.providerName ?? null,
-      });
-      const normalizedKnownProviderModel = normalizeModelSlug(thread.model, inferredProvider);
       return {
         id: thread.id,
         codexThreadId: null,
         projectId: thread.projectId,
         title: thread.title,
-        model:
-          thread.session?.providerName === "copilot"
-            ? (normalizedKnownProviderModel ?? thread.model)
-            : resolveModelSlugForProvider(inferredProvider, thread.model),
+        model: resolveModelSlugForProvider(
+          inferProviderForThreadModel({
+            model: thread.model,
+            sessionProviderName: thread.session?.providerName ?? null,
+          }),
+          thread.model,
+        ),
         runtimeMode: thread.runtimeMode,
         interactionMode: thread.interactionMode,
         session: thread.session
@@ -407,22 +392,19 @@ export function setProjectExpanded(
   return changed ? { ...state, projects } : state;
 }
 
-export function reorderProject(
+export function reorderProjects(
   state: AppState,
-  projectId: Project["id"],
-  targetIndex: number,
+  draggedProjectId: Project["id"],
+  targetProjectId: Project["id"],
 ): AppState {
-  const currentIndex = state.projects.findIndex((project) => project.id === projectId);
-  if (currentIndex < 0) return state;
-
-  const projects = state.projects.slice();
-  const [project] = projects.splice(currentIndex, 1);
-  if (!project) return state;
-  const boundedTargetIndex = Math.max(0, Math.min(targetIndex, projects.length));
-  if (boundedTargetIndex === currentIndex) {
-    return state;
-  }
-  projects.splice(boundedTargetIndex, 0, project);
+  if (draggedProjectId === targetProjectId) return state;
+  const draggedIndex = state.projects.findIndex((project) => project.id === draggedProjectId);
+  const targetIndex = state.projects.findIndex((project) => project.id === targetProjectId);
+  if (draggedIndex < 0 || targetIndex < 0) return state;
+  const projects = [...state.projects];
+  const [draggedProject] = projects.splice(draggedIndex, 1);
+  if (!draggedProject) return state;
+  projects.splice(targetIndex, 0, draggedProject);
   return { ...state, projects };
 }
 
@@ -460,8 +442,8 @@ interface AppStore extends AppState {
   markThreadVisited: (threadId: ThreadId, visitedAt?: string) => void;
   markThreadUnread: (threadId: ThreadId) => void;
   toggleProject: (projectId: Project["id"]) => void;
-  reorderProject: (projectId: Project["id"], targetIndex: number) => void;
   setProjectExpanded: (projectId: Project["id"], expanded: boolean) => void;
+  reorderProjects: (draggedProjectId: Project["id"], targetProjectId: Project["id"]) => void;
   setError: (threadId: ThreadId, error: string | null) => void;
   setThreadBranch: (threadId: ThreadId, branch: string | null, worktreePath: string | null) => void;
 }
@@ -473,17 +455,24 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId) => set((state) => markThreadUnread(state, threadId)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
-  reorderProject: (projectId, targetIndex) =>
-    set((state) => reorderProject(state, projectId, targetIndex)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
+  reorderProjects: (draggedProjectId, targetProjectId) =>
+    set((state) => reorderProjects(state, draggedProjectId, targetProjectId)),
   setError: (threadId, error) => set((state) => setError(state, threadId, error)),
   setThreadBranch: (threadId, branch, worktreePath) =>
     set((state) => setThreadBranch(state, threadId, branch, worktreePath)),
 }));
 
-// Persist on every state change
-useStore.subscribe((state) => persistState(state));
+// Persist state changes with debouncing to avoid localStorage thrashing
+useStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+
+// Flush pending writes synchronously before page unload to prevent data loss.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    debouncedPersistState.flush();
+  });
+}
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
