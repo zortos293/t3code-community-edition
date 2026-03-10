@@ -1,9 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useDebouncedValue } from "@tanstack/react-pacer";
+import { ArrowUpRightIcon, DownloadIcon, HeartIcon, SearchIcon } from "lucide-react";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import {
   WEBGPU_DTYPE_OPTIONS,
   type ProviderKind,
+  type ServerHuggingFaceModel,
   type WebGpuModelDtype,
 } from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
@@ -11,7 +14,7 @@ import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import { MAX_CUSTOM_MODEL_LENGTH, useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
+import { huggingFaceModelSearchQueryOptions, serverConfigQueryOptions } from "../lib/serverReactQuery";
 import {
   clearLocalWebGpuState,
   getLocalWebGpuStatusSnapshot,
@@ -19,8 +22,11 @@ import {
 } from "../localWebGpuOrchestration";
 import { ensureNativeApi } from "../nativeApi";
 import { preferredTerminalEditor } from "../terminal-links";
+import { HUGGING_FACE_BRAND_ASSET_URL } from "../components/Icons";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Spinner } from "../components/ui/spinner";
 import { Switch } from "../components/ui/switch";
 import { SidebarInset } from "~/components/ui/sidebar";
 
@@ -41,6 +47,20 @@ const THEME_OPTIONS = [
     description: "Always use the dark theme.",
   },
 ] as const;
+
+const HUGGING_FACE_QUICK_FILTERS = [
+  { label: "Featured", query: "" },
+  { label: "Qwen", query: "Qwen instruct" },
+  { label: "Coder", query: "coder instruct" },
+  { label: "Llama", query: "Llama instruct" },
+  { label: "Phi", query: "Phi instruct" },
+  { label: "SmolLM", query: "SmolLM instruct" },
+] as const;
+
+const compactNumberFormatter = new Intl.NumberFormat(undefined, {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 
 const MODEL_PROVIDER_SETTINGS: Array<{
   provider: ProviderKind;
@@ -64,6 +84,37 @@ const MODEL_PROVIDER_SETTINGS: Array<{
     example: "onnx-community/Qwen2.5-0.5B-Instruct",
   },
 ] as const;
+
+type SaveCustomModelResult =
+  | {
+      ok: true;
+      slug: string;
+      builtIn: boolean;
+      alreadySaved: boolean;
+      added: boolean;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+function formatCompactMetric(value: number): string {
+  return compactNumberFormatter.format(Math.max(0, value));
+}
+
+function huggingFaceModelUrl(modelId: string): string {
+  return `https://huggingface.co/${modelId
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+}
+
+function huggingFaceSearchUrl(query: string): string {
+  const normalizedQuery = query.trim();
+  return normalizedQuery.length > 0
+    ? `https://huggingface.co/models?search=${encodeURIComponent(normalizedQuery)}`
+    : "https://huggingface.co/models?author=onnx-community&pipeline_tag=text-generation";
+}
 
 function getCustomModelsForProvider(
   settings: ReturnType<typeof useAppSettings>["settings"],
@@ -130,6 +181,7 @@ function SettingsRouteView() {
   const [openKeybindingsError, setOpenKeybindingsError] = useState<string | null>(null);
   const [isClearingLocalWebGpuState, setIsClearingLocalWebGpuState] = useState(false);
   const [localWebGpuActionMessage, setLocalWebGpuActionMessage] = useState<string | null>(null);
+  const [huggingFaceModelQuery, setHuggingFaceModelQuery] = useState("");
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -137,6 +189,11 @@ function SettingsRouteView() {
     copilot: "",
     webgpu: "",
   });
+  const [debouncedHuggingFaceModelQuery, huggingFaceModelQueryDebouncer] = useDebouncedValue(
+    huggingFaceModelQuery,
+    { wait: 350 },
+    (debouncerState) => ({ isPending: debouncerState.isPending }),
+  );
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
   >({});
@@ -154,7 +211,26 @@ function SettingsRouteView() {
     ],
     [settings.customWebGpuModels, webGpuBuiltInOptions],
   );
+  const webGpuBuiltInModelSlugs = useMemo(
+    () => new Set<string>(webGpuBuiltInOptions.map((option) => option.slug)),
+    [webGpuBuiltInOptions],
+  );
   const localWebGpuProgressLabel = formatLocalWebGpuProgress(localWebGpuStatus.progress);
+  const normalizedHuggingFaceModelQuery = debouncedHuggingFaceModelQuery.trim();
+  const huggingFaceModelsQuery = useQuery(
+    huggingFaceModelSearchQueryOptions({
+      query: normalizedHuggingFaceModelQuery.length > 0 ? normalizedHuggingFaceModelQuery : null,
+      limit: normalizedHuggingFaceModelQuery.length > 0 ? 10 : 8,
+    }),
+  );
+  const huggingFaceModels = huggingFaceModelsQuery.data?.models ?? [];
+  const isRefreshingHuggingFaceModels =
+    huggingFaceModelQueryDebouncer.state.isPending || huggingFaceModelsQuery.isFetching;
+  const huggingFaceBrowseError = huggingFaceModelsQuery.isError
+    ? huggingFaceModelsQuery.error instanceof Error
+      ? huggingFaceModelsQuery.error.message
+      : "Unable to load Hugging Face models right now."
+    : null;
 
   const openKeybindingsFile = useCallback(() => {
     if (!keybindingsConfigPath) return;
@@ -173,33 +249,60 @@ function SettingsRouteView() {
       });
   }, [keybindingsConfigPath]);
 
+  const saveCustomModel = useCallback(
+    (provider: ProviderKind, rawModelSlug: string): SaveCustomModelResult => {
+      const customModels = getCustomModelsForProvider(settings, provider);
+      const normalized = normalizeModelSlug(rawModelSlug, provider);
+      if (!normalized) {
+        return { ok: false, error: "Enter a model slug." };
+      }
+      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
+        return {
+          ok: false,
+          error: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
+        };
+      }
+
+      const builtIn = getModelOptions(provider).some((option) => option.slug === normalized);
+      const alreadySaved = customModels.includes(normalized);
+      if (!builtIn && !alreadySaved) {
+        updateSettings(patchCustomModels(provider, [...customModels, normalized]));
+      }
+
+      setCustomModelErrorByProvider((existing) => ({
+        ...existing,
+        [provider]: null,
+      }));
+
+      return {
+        ok: true,
+        slug: normalized,
+        builtIn,
+        alreadySaved,
+        added: !builtIn && !alreadySaved,
+      };
+    },
+    [settings, updateSettings],
+  );
+
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
-      const customModelInput = customModelInputByProvider[provider];
-      const customModels = getCustomModelsForProvider(settings, provider);
-      const normalized = normalizeModelSlug(customModelInput, provider);
-      if (!normalized) {
+      const result = saveCustomModel(provider, customModelInputByProvider[provider]);
+      if (!result.ok) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,
-          [provider]: "Enter a model slug.",
+          [provider]: result.error,
         }));
         return;
       }
-      if (getModelOptions(provider).some((option) => option.slug === normalized)) {
+      if (result.builtIn) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,
           [provider]: "That model is already built in.",
         }));
         return;
       }
-      if (normalized.length > MAX_CUSTOM_MODEL_LENGTH) {
-        setCustomModelErrorByProvider((existing) => ({
-          ...existing,
-          [provider]: `Model slugs must be ${MAX_CUSTOM_MODEL_LENGTH} characters or less.`,
-        }));
-        return;
-      }
-      if (customModels.includes(normalized)) {
+      if (result.alreadySaved) {
         setCustomModelErrorByProvider((existing) => ({
           ...existing,
           [provider]: "That custom model is already saved.",
@@ -207,17 +310,12 @@ function SettingsRouteView() {
         return;
       }
 
-      updateSettings(patchCustomModels(provider, [...customModels, normalized]));
       setCustomModelInputByProvider((existing) => ({
         ...existing,
         [provider]: "",
       }));
-      setCustomModelErrorByProvider((existing) => ({
-        ...existing,
-        [provider]: null,
-      }));
     },
-    [customModelInputByProvider, settings, updateSettings],
+    [customModelInputByProvider, saveCustomModel],
   );
 
   const removeCustomModel = useCallback(
@@ -251,6 +349,51 @@ function SettingsRouteView() {
       setIsClearingLocalWebGpuState(false);
     }
   }, []);
+
+  const openHuggingFaceModelPage = useCallback((modelId: string) => {
+    const api = ensureNativeApi();
+    void api.shell.openExternal(huggingFaceModelUrl(modelId)).catch((error) => {
+      setLocalWebGpuActionMessage(
+        error instanceof Error ? error.message : "Unable to open the Hugging Face model page.",
+      );
+    });
+  }, []);
+
+  const saveHuggingFaceModel = useCallback(
+    (model: ServerHuggingFaceModel, options?: { setDefault?: boolean }) => {
+      const result = saveCustomModel("webgpu", model.id);
+      if (!result.ok) {
+        setLocalWebGpuActionMessage(result.error);
+        return;
+      }
+
+      const setDefault = options?.setDefault ?? false;
+      const isAlreadyDefault = settings.webGpuDefaultModel === result.slug;
+      if (setDefault && !isAlreadyDefault) {
+        updateSettings({ webGpuDefaultModel: result.slug });
+      }
+
+      if (setDefault) {
+        setLocalWebGpuActionMessage(
+          isAlreadyDefault
+            ? `${result.slug} is already the default local WebGPU model.`
+            : `Set ${result.slug} as the default local WebGPU model.`,
+        );
+        return;
+      }
+
+      if (result.added) {
+        setLocalWebGpuActionMessage(`Added ${result.slug} to your local WebGPU models.`);
+        return;
+      }
+      if (result.builtIn) {
+        setLocalWebGpuActionMessage(`${result.slug} is already available as a built-in local model.`);
+        return;
+      }
+      setLocalWebGpuActionMessage(`${result.slug} is already saved in your custom local models.`);
+    },
+    [saveCustomModel, settings.webGpuDefaultModel, updateSettings],
+  );
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground isolate">
@@ -583,6 +726,246 @@ function SettingsRouteView() {
                   {localWebGpuActionMessage ? (
                     <p className="mt-2 text-foreground">{localWebGpuActionMessage}</p>
                   ) : null}
+                </div>
+
+                <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-xs">
+                  <div className="border-b border-border bg-muted/20 px-4 py-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-xl border border-border bg-background shadow-xs">
+                          <img
+                            alt=""
+                            aria-hidden="true"
+                            className="size-6"
+                            src={HUGGING_FACE_BRAND_ASSET_URL}
+                          />
+                        </span>
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-sm font-medium text-foreground">
+                              Browse Hugging Face models
+                            </h3>
+                            <Badge size="sm" variant="warning">
+                              Local WebGPU
+                            </Badge>
+                          </div>
+                          <p className="max-w-2xl text-xs text-muted-foreground">
+                            Search public text-generation repos filtered for Transformers.js
+                            compatibility, then save them straight into your local model picker.
+                          </p>
+                        </div>
+                      </div>
+
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          const api = ensureNativeApi();
+                          void api.shell
+                            .openExternal(huggingFaceSearchUrl(normalizedHuggingFaceModelQuery))
+                            .catch((error) => {
+                              setLocalWebGpuActionMessage(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Unable to open Hugging Face.",
+                              );
+                            });
+                        }}
+                      >
+                        Open Hub
+                        <ArrowUpRightIcon className="size-3.5" />
+                      </Button>
+                    </div>
+
+                    <div className="mt-4 rounded-xl border border-border bg-background px-3 py-3 shadow-xs">
+                      <div className="space-y-3">
+                        <label htmlFor="hugging-face-model-query" className="block space-y-1">
+                          <span className="text-xs font-medium text-foreground">
+                            Search compatible model ids
+                          </span>
+                          <div className="relative">
+                            <SearchIcon className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-3 size-4 text-muted-foreground" />
+                            <Input
+                              id="hugging-face-model-query"
+                              value={huggingFaceModelQuery}
+                              onChange={(event) => setHuggingFaceModelQuery(event.target.value)}
+                              placeholder="Search Qwen, Phi, Llama, SmolLM, coder..."
+                              className="pr-10 pl-9"
+                              spellCheck={false}
+                            />
+                            {isRefreshingHuggingFaceModels ? (
+                              <Spinner className="-translate-y-1/2 absolute top-1/2 right-3 size-4 text-muted-foreground" />
+                            ) : null}
+                          </div>
+                        </label>
+
+                        <div className="flex flex-wrap gap-2">
+                          {HUGGING_FACE_QUICK_FILTERS.map((filter) => {
+                            const active =
+                              (filter.query.length === 0 && huggingFaceModelQuery.length === 0) ||
+                              huggingFaceModelQuery === filter.query;
+                            return (
+                              <Button
+                                key={filter.label}
+                                size="xs"
+                                variant={active ? "secondary" : "outline"}
+                                onClick={() => setHuggingFaceModelQuery(filter.query)}
+                              >
+                                {filter.label}
+                              </Button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 bg-background px-4 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge
+                          variant={
+                            huggingFaceModelsQuery.data?.mode === "search" ? "info" : "success"
+                          }
+                          size="sm"
+                        >
+                          {huggingFaceModelsQuery.data?.mode === "search"
+                            ? "Search results"
+                            : "Featured picks"}
+                        </Badge>
+                        <span>
+                          {huggingFaceModels.length} model{huggingFaceModels.length === 1 ? "" : "s"}
+                          {huggingFaceModelsQuery.data?.truncated ? " shown" : ""}
+                        </span>
+                      </div>
+                      <span>
+                        {normalizedHuggingFaceModelQuery.length > 0
+                          ? `Query: ${normalizedHuggingFaceModelQuery}`
+                          : "Showing onnx-community instruct models first"}
+                      </span>
+                    </div>
+
+                    {huggingFaceBrowseError ? (
+                      <div className="rounded-xl border border-destructive/30 bg-destructive/6 px-3 py-2 text-xs text-destructive">
+                        {huggingFaceBrowseError}
+                      </div>
+                    ) : null}
+
+                    {huggingFaceModels.length > 0 ? (
+                      <div className="space-y-3">
+                        {huggingFaceModels.map((model) => {
+                          const isBuiltIn = webGpuBuiltInModelSlugs.has(model.id);
+                          const isSaved = settings.customWebGpuModels.includes(model.id);
+                          const isDefault = settings.webGpuDefaultModel === model.id;
+                          return (
+                            <article
+                              key={model.id}
+                              className="rounded-xl border border-border bg-muted/15 p-4 shadow-xs"
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="text-sm font-medium text-foreground">
+                                      {model.name}
+                                    </p>
+                                    <Badge
+                                      size="sm"
+                                      variant={
+                                        model.compatibility === "recommended" ? "success" : "warning"
+                                      }
+                                    >
+                                      {model.compatibility === "recommended"
+                                        ? "Recommended"
+                                        : "Community"}
+                                    </Badge>
+                                    {isBuiltIn ? (
+                                      <Badge size="sm" variant="secondary">
+                                        Built in
+                                      </Badge>
+                                    ) : null}
+                                    {isSaved ? (
+                                      <Badge size="sm" variant="outline">
+                                        Saved
+                                      </Badge>
+                                    ) : null}
+                                    {isDefault ? (
+                                      <Badge size="sm" variant="default">
+                                        Default
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                  <code className="mt-1 block truncate text-xs text-muted-foreground">
+                                    {model.id}
+                                  </code>
+                                </div>
+
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  onClick={() => openHuggingFaceModelPage(model.id)}
+                                >
+                                  View
+                                  <ArrowUpRightIcon className="size-3.5" />
+                                </Button>
+                              </div>
+
+                              <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1">
+                                  <DownloadIcon className="size-3.5" />
+                                  {formatCompactMetric(model.downloads)}
+                                </span>
+                                <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1">
+                                  <HeartIcon className="size-3.5" />
+                                  {formatCompactMetric(model.likes)}
+                                </span>
+                                <span className="rounded-md border border-border bg-background px-2 py-1">
+                                  {model.pipelineTag}
+                                </span>
+                                {model.libraryName ? (
+                                  <span className="rounded-md border border-border bg-background px-2 py-1">
+                                    {model.libraryName}
+                                  </span>
+                                ) : null}
+                                {model.license ? (
+                                  <span className="rounded-md border border-border bg-background px-2 py-1">
+                                    {model.license}
+                                  </span>
+                                ) : null}
+                              </div>
+
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <Button
+                                  size="xs"
+                                  variant={isBuiltIn || isSaved ? "outline" : "default"}
+                                  disabled={isBuiltIn || isSaved}
+                                  onClick={() => saveHuggingFaceModel(model)}
+                                >
+                                  {isBuiltIn ? "Built in" : isSaved ? "Saved" : "Add model"}
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  variant={isDefault ? "secondary" : "outline"}
+                                  onClick={() => saveHuggingFaceModel(model, { setDefault: true })}
+                                >
+                                  {isDefault ? "Default selected" : "Set as default"}
+                                </Button>
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    ) : isRefreshingHuggingFaceModels ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-dashed border-border bg-muted/10 px-3 py-4 text-xs text-muted-foreground">
+                        <Spinner className="size-4" />
+                        Loading compatible Hugging Face models...
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-border bg-muted/10 px-3 py-4 text-xs text-muted-foreground">
+                        No compatible public text-generation models matched that search. Try a
+                        broader family name like <code>Qwen</code> or <code>Llama</code>.
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3">

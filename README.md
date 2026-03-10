@@ -39,7 +39,7 @@ Open the app, connect your provider, and start chatting.
 
 - Local WebGPU runs entirely in the browser and does not use the server provider runtime.
 - The first run downloads model files from Hugging Face/CDN endpoints and may take a while.
-- Start with the curated small instruct models in Settings for the best chance of fitting browser memory limits.
+- Use the Settings browser to search compatible Hugging Face models, then start with the smaller instruct variants for the best chance of fitting browser memory limits.
 - WebGPU availability depends on browser, OS, and GPU support. Recent Chromium-based browsers work best today.
 
 ## Some notes

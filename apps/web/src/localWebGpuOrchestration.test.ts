@@ -112,6 +112,7 @@ function createBaseApi(): NativeApi {
     server: {
       getConfig: vi.fn(),
       upsertKeybinding: vi.fn(),
+      searchHuggingFaceModels: vi.fn(),
     },
     orchestration: {
       getSnapshot: vi.fn(async () => ({

@@ -187,6 +187,7 @@ import {
   CursorIcon,
   Gemini,
   GitHubIcon,
+  HuggingFaceIcon,
   Icon,
   OpenAI,
   OpenCodeIcon,
@@ -6353,7 +6354,7 @@ function getCustomModelOptionsByProvider(
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon | LucideIcon> = {
   codex: OpenAI,
   copilot: GitHubIcon,
-  webgpu: ZapIcon,
+  webgpu: HuggingFaceIcon,
   claudeCode: ClaudeAI,
   cursor: CursorIcon,
 };
