@@ -199,7 +199,7 @@ function listSkills(): Effect.Effect<SkillsListResult, SkillsError> {
         let content = "";
         if (skillMdPath) {
           try {
-            content = fs.readFileSync(skillMdPath, "utf-8");
+            content = await fsp.readFile(skillMdPath, "utf-8");
           } catch {
             // Couldn't read SKILL.md
           }

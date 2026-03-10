@@ -1836,7 +1836,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
-      const slashCommandItems = [
+      const baseSlashCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = [
         {
           id: "slash:model",
           type: "slash-command",
@@ -1858,17 +1858,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
-        {
-          id: "slash:skills",
-          type: "slash-command",
-          command: "skills",
-          label: "/skills",
-          description: "Use a skill in this message",
-        },
-      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      ];
+
+      const slashCommandItems: Array<Extract<ComposerCommandItem, { type: "slash-command" }>> = isElectron
+        ? [...baseSlashCommandItems, {
+            id: "slash:skills",
+            type: "slash-command",
+            command: "skills",
+            label: "/skills",
+            description: "Use a skill in this message",
+          }]
+        : baseSlashCommandItems;
+
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
-        return [...slashCommandItems];
+        return slashCommandItems;
       }
       return slashCommandItems.filter(
         (item) => item.command.includes(query) || item.label.slice(1).includes(query),
