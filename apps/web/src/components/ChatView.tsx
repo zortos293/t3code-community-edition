@@ -4377,7 +4377,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             onClick={toggleInteractionMode}
                           />
                           <CompactComposerControlsMenu
-                            activePlan={Boolean(activePlan || activeProposedPlan || planSidebarOpen)}
+                            activePlan={Boolean(
+                              activePlan || activeProposedPlan || planSidebarOpen,
+                            )}
                             interactionMode={interactionMode}
                             planSidebarOpen={planSidebarOpen}
                             runtimeMode={runtimeMode}
@@ -4425,7 +4427,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
                             />
                           ) : null}
 
-                          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                          <Separator
+                            orientation="vertical"
+                            className="mx-0.5 hidden h-4 sm:block"
+                          />
 
                           <InteractionModeToggleButton
                             interactionMode={interactionMode}
