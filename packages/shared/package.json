@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./githubRepository": {
+      "types": "./src/githubRepository.ts",
+      "import": "./src/githubRepository.ts"
+    },
     "./model": {
       "types": "./src/model.ts",
       "import": "./src/model.ts"
@@ -23,6 +27,14 @@
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
+    },
+    "./DrainableWorker": {
+      "types": "./src/DrainableWorker.ts",
+      "import": "./src/DrainableWorker.ts"
+    },
+    "./schemaJson": {
+      "types": "./src/schemaJson.ts",
+      "import": "./src/schemaJson.ts"
     }
   },
   "scripts": {
