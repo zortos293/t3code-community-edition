@@ -5,7 +5,6 @@
  * Skills are enabled when their directory lives under `~/.agents/skills/<name>/`
  * and disabled when moved to `~/.t3/disabledSkills/<name>/`.
  *
- * @module SkillsManager
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
