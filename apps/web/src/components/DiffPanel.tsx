@@ -20,6 +20,7 @@ import { preferredTerminalEditor, resolvePathLinkTarget } from "../terminal-link
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
+import { useAppSettings } from "../appSettings";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
@@ -164,6 +165,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
+  const { settings } = useAppSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
@@ -548,6 +550,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ) : orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
+        </div>
+      ) : !settings.showFileChangeDiffs ? (
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+          File change diffs are hidden in settings.
         </div>
       ) : (
         <>
