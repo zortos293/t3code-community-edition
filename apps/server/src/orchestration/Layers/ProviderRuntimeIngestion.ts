@@ -1041,7 +1041,10 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (event.type === "turn.completed" || event.type === "turn.aborted") {
+      if (
+        (event.type === "turn.completed" || event.type === "turn.aborted") &&
+        shouldApplyThreadLifecycle
+      ) {
         const turnId = toTurnId(event.turnId);
         if (turnId) {
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);

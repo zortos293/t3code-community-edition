@@ -1784,4 +1784,44 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("running");
     expect(thread.session?.activeTurnId).toBe("turn-after-abort");
   });
+
+  it("ignores a late turn.aborted for a different turn than the active one", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Start turn-2 so it becomes the active turn.
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-active"),
+      provider: "copilot",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-2"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === "turn-2",
+    );
+
+    // A late abort arrives for a stale turn (turn-1) — should be ignored.
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-turn-aborted-stale"),
+      provider: "copilot",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-1"),
+      payload: { reason: "late abort" },
+    });
+
+    // Allow event processing to settle, then verify state is unchanged.
+    await harness.drain();
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === "turn-2",
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.activeTurnId).toBe("turn-2");
+  });
 });
