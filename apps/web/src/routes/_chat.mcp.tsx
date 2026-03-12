@@ -1131,6 +1131,7 @@ function McpRouteView() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search servers..."
+                  aria-label="Search MCP servers"
                   className="pl-8"
                 />
               </div>

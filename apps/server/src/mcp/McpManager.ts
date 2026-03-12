@@ -447,6 +447,9 @@ function addServer(input: McpAddInput): Effect.Effect<McpAddResult, McpError> {
           if (input.command) entry.command = input.command;
           if (input.args?.length) entry.args = [...input.args];
           if (input.url) entry.url = input.url;
+          if (input.headers && Object.keys(input.headers).length > 0) {
+            entry.headers = { ...input.headers };
+          }
           if (input.bearerToken) entry.bearer_token_env_var = input.bearerToken;
           config.mcp_servers[input.name] = entry;
           await writeCodexConfig(config);
