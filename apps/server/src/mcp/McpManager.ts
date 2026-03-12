@@ -618,6 +618,8 @@ function updateServer(input: McpUpdateInput): Effect.Effect<McpUpdateResult, Mcp
           if (input.args !== undefined) entry.args = [...input.args];
           if (input.url !== undefined) entry.url = input.url;
           if (input.headers !== undefined) entry.headers = { ...input.headers };
+          // Sync type field with current transport
+          entry.type = entry.command ? "stdio" : "http";
           // Validate resulting transport state
           assertValidTransport({
             command: typeof entry.command === "string" ? entry.command : undefined,
