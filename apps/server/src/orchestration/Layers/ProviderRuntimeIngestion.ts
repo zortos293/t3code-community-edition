@@ -444,7 +444,7 @@ function runtimeEventToActivities(
           createdAt: event.createdAt,
           tone: "tool",
           kind: "tool.completed",
-          summary: `${event.payload.title ?? "Tool"} complete`,
+          summary: event.payload.title ?? "Tool",
           payload: toolLifecycleActivityPayload(event.payload),
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
