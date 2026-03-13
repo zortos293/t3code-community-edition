@@ -149,6 +149,7 @@ import {
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
+  GlobeIcon,
   HammerIcon,
   ListTodoIcon,
   LockIcon,
@@ -244,6 +245,10 @@ import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./Compose
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import { formatTimestamp } from "../timestampFormat";
+import {
+  computeMessageDurationStart,
+  normalizeCompactToolLabel,
+} from "./chat/MessagesTimeline.logic";
 
 function formatMessageMeta(
   createdAt: string,
@@ -326,24 +331,24 @@ function workToneIcon(tone: "thinking" | "tool" | "info" | "error") {
   if (tone === "error") {
     return {
       icon: CircleAlertIcon,
-      className: "text-black/85 dark:text-white/90",
+      className: "text-foreground/92",
     };
   }
   if (tone === "thinking") {
     return {
       icon: BotIcon,
-      className: "text-black/85 dark:text-white/90",
+      className: "text-foreground/92",
     };
   }
   if (tone === "info") {
     return {
       icon: CheckIcon,
-      className: "text-black/85 dark:text-white/90",
+      className: "text-foreground/92",
     };
   }
   return {
     icon: ZapIcon,
-    className: "text-black/85 dark:text-white/90",
+    className: "text-foreground/92",
   };
 }
 
@@ -368,6 +373,23 @@ function workEntryIcon(workEntry: WorkLogEntry): LucideIcon {
   if (workEntry.requestKind === "command") return TerminalIcon;
   if (workEntry.requestKind === "file-read") return EyeIcon;
   if (workEntry.requestKind === "file-change") return SquarePenIcon;
+
+  if (workEntry.itemType === "command_execution" || workEntry.command) {
+    return TerminalIcon;
+  }
+  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
+    return SquarePenIcon;
+  }
+  if (workEntry.itemType === "web_search") return GlobeIcon;
+  if (workEntry.itemType === "image_view") return EyeIcon;
+
+  switch (workEntry.itemType) {
+    case "mcp_tool_call":
+      return WrenchIcon;
+    case "dynamic_tool_call":
+    case "collab_agent_tool_call":
+      return HammerIcon;
+  }
 
   const haystack = [
     workEntry.label,
@@ -404,21 +426,6 @@ function workEntryIcon(workEntry: WorkLogEntry): LucideIcon {
   if (haystack.includes("edit") || haystack.includes("patch")) return WrenchIcon;
   if (haystack.includes("file")) return FileIcon;
 
-  switch (workEntry.itemType) {
-    case "command_execution":
-      return TerminalIcon;
-    case "file_change":
-      return SquarePenIcon;
-    case "mcp_tool_call":
-      return WrenchIcon;
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
-      return HammerIcon;
-    case "web_search":
-      return SearchIcon;
-    case "image_view":
-      return EyeIcon;
-  }
   if (haystack.includes("task")) return HammerIcon;
 
   if (workEntry.activityKind === "turn.plan.updated") return ListTodoIcon;
@@ -439,20 +446,9 @@ function capitalizePhrase(value: string): string {
 
 function toolWorkEntryHeading(workEntry: WorkLogEntry): string {
   if (!workEntry.toolTitle) {
-    return capitalizePhrase(workEntry.label);
+    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
-
-  const statusLabel =
-    workEntry.toolStatus === "failed"
-      ? "failed"
-      : workEntry.toolStatus === "declined"
-        ? "declined"
-        : workEntry.toolStatus === "inProgress" || workEntry.activityKind === "tool.updated"
-          ? "running"
-          : workEntry.activityKind === "tool.started"
-            ? "started"
-            : "complete";
-  return capitalizePhrase(`${workEntry.toolTitle} ${statusLabel}`);
+  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
 function primaryWorkEntryPath(workEntry: WorkLogEntry): string | null {
@@ -699,8 +695,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const { workEntry, workEntryIndex, timestampFormat } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
+  const heading = toolWorkEntryHeading(workEntry);
   const preview = workEntryPreview(workEntry);
-  const displayText = preview ? `${workEntry.label} - ${preview}` : workEntry.label;
+  const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
 
@@ -727,7 +724,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             title={displayText}
           >
             <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-              {workEntry.label}
+              {heading}
             </span>
             {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
           </p>
@@ -5821,6 +5818,7 @@ type TimelineRow =
       id: string;
       createdAt: string;
       message: TimelineMessage;
+      durationStart: string;
       showCompletionDivider: boolean;
     }
   | {
@@ -5889,6 +5887,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
+    const durationStartByMessageId = computeMessageDurationStart(
+      timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
+    );
 
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const timelineEntry = timelineEntries[index];
@@ -5930,6 +5931,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         message: timelineEntry.message,
+        durationStart:
+          durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
         showCompletionDivider:
           timelineEntry.message.role === "assistant" &&
           completionDividerBeforeEntryId === timelineEntry.id,
@@ -6270,8 +6273,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   {formatMessageMeta(
                     row.message.createdAt,
                     row.message.streaming
-                      ? formatElapsed(row.message.createdAt, nowIso)
-                      : formatElapsed(row.message.createdAt, row.message.completedAt),
+                      ? formatElapsed(row.durationStart, nowIso)
+                      : formatElapsed(row.durationStart, row.message.completedAt),
                     timestampFormat,
                   )}
                 </p>
