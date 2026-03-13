@@ -249,6 +249,7 @@ import {
   computeMessageDurationStart,
   normalizeCompactToolLabel,
 } from "./chat/MessagesTimeline.logic";
+import { resolveProviderHealthBannerProvider } from "./ChatView.logic";
 
 function formatMessageMeta(
   createdAt: string,
@@ -1981,7 +1982,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
-  const activeProvider = activeThread?.session?.provider ?? "codex";
+  const activeProvider = resolveProviderHealthBannerProvider({
+    sessionProvider: activeThread?.session?.provider ?? null,
+    selectedProvider,
+  });
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
     [activeProvider, providerStatuses],

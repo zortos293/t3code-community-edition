@@ -125,3 +125,10 @@ export function getCustomModelOptionsByProvider(settings: {
     copilot: getAppModelOptions("copilot", settings.customCopilotModels),
   };
 }
+
+export function resolveProviderHealthBannerProvider(input: {
+  sessionProvider: ProviderKind | null;
+  selectedProvider: ProviderKind;
+}): ProviderKind {
+  return input.sessionProvider ?? input.selectedProvider;
+}
