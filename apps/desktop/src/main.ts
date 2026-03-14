@@ -29,6 +29,12 @@ import { NetService } from "@t3tools/shared/Net";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { fixPath } from "./fixPath";
+import { hasDeveloperIdApplicationAuthority } from "./macCodeSigning";
+import {
+  buildMacManualUpdateInstallScript,
+  findFirstAppBundlePath,
+  resolveDownloadedMacUpdateZipPath,
+} from "./macUpdateInstaller";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState";
 import {
   createInitialDesktopUpdateState,
@@ -93,6 +99,8 @@ let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
+let macDeveloperIdSigned: boolean | null = null;
+let downloadedUpdateFiles: string[] = [];
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   platform: process.platform,
   processArch: process.arch,
@@ -113,6 +121,48 @@ function sanitizeLogValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function resolveMacAppBundlePath(): string | null {
+  if (process.platform !== "darwin" || !app.isPackaged) {
+    return null;
+  }
+
+  return Path.resolve(process.execPath, "..", "..", "..");
+}
+
+function isMacDeveloperIdSignedBuild(): boolean {
+  if (process.platform !== "darwin" || !app.isPackaged) {
+    return false;
+  }
+  if (macDeveloperIdSigned !== null) {
+    return macDeveloperIdSigned;
+  }
+
+  const appBundlePath = resolveMacAppBundlePath();
+  if (!appBundlePath) {
+    macDeveloperIdSigned = false;
+    return macDeveloperIdSigned;
+  }
+
+  const result = ChildProcess.spawnSync("codesign", ["--display", "--verbose=4", appBundlePath], {
+    encoding: "utf8",
+  });
+  const details = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
+  macDeveloperIdSigned = result.status === 0 && hasDeveloperIdApplicationAuthority(details);
+
+  if (!macDeveloperIdSigned) {
+    const diagnostic =
+      result.error?.message ||
+      (result.status === 0
+        ? "missing Developer ID Application authority in code signature"
+        : details || `codesign exited with status ${result.status ?? "unknown"}`);
+    console.info(
+      `[desktop-updater] macOS code-signing check indicates manual install fallback will be used: ${sanitizeLogValue(diagnostic)}`,
+    );
+  }
+
+  return macDeveloperIdSigned;
+}
+
 function writeDesktopLogHeader(message: string): void {
   if (!desktopLogSink) return;
   desktopLogSink.write(`[${logTimestamp()}] [${logScope("desktop")}] ${message}\n`);
@@ -131,6 +181,14 @@ function formatErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function setDownloadedUpdateFiles(files: ReadonlyArray<string>): void {
+  downloadedUpdateFiles = [...files];
+}
+
+function clearDownloadedUpdateFiles(): void {
+  downloadedUpdateFiles = [];
 }
 
 function getSafeExternalUrl(rawUrl: unknown): string | null {
@@ -513,13 +571,7 @@ function dispatchMenuAction(action: string): void {
 }
 
 function handleCheckForUpdatesMenuClick(): void {
-  const disabledReason = getAutoUpdateDisabledReason({
-    isDevelopment,
-    isPackaged: app.isPackaged,
-    platform: process.platform,
-    appImage: process.env.APPIMAGE,
-    disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
-  });
+  const disabledReason = resolveAutoUpdateDisabledReason();
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
     void dialog.showMessageBox({
@@ -730,16 +782,14 @@ function setUpdateState(patch: Partial<DesktopUpdateState>): void {
   emitUpdateState();
 }
 
-function shouldEnableAutoUpdates(): boolean {
-  return (
-    getAutoUpdateDisabledReason({
-      isDevelopment,
-      isPackaged: app.isPackaged,
-      platform: process.platform,
-      appImage: process.env.APPIMAGE,
-      disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
-    }) === null
-  );
+function resolveAutoUpdateDisabledReason(): string | null {
+  return getAutoUpdateDisabledReason({
+    isDevelopment,
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    appImage: process.env.APPIMAGE,
+    disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+  });
 }
 
 async function checkForUpdates(reason: string): Promise<void> {
@@ -777,16 +827,66 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
   console.info("[desktop-updater] Downloading update...");
 
   try {
-    await autoUpdater.downloadUpdate();
+    const downloadedFiles = await autoUpdater.downloadUpdate();
+    setDownloadedUpdateFiles(downloadedFiles);
     return { accepted: true, completed: true };
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
+    clearDownloadedUpdateFiles();
     setUpdateState(reduceDesktopUpdateStateOnDownloadFailure(updateState, message));
     console.error(`[desktop-updater] Failed to download update: ${message}`);
     return { accepted: true, completed: false };
   } finally {
     updateDownloadInFlight = false;
   }
+}
+
+function installDownloadedUnsignedMacUpdate(): void {
+  const currentAppPath = resolveMacAppBundlePath();
+  if (!currentAppPath) {
+    throw new Error("Could not resolve the current app bundle path.");
+  }
+
+  const downloadedZipPath = resolveDownloadedMacUpdateZipPath(downloadedUpdateFiles);
+  if (!downloadedZipPath) {
+    throw new Error("Could not locate the downloaded macOS update archive.");
+  }
+
+  const stagingDir = FS.mkdtempSync(Path.join(OS.tmpdir(), "t3-mac-update-"));
+  const extractedDir = Path.join(stagingDir, "extracted");
+  FS.mkdirSync(extractedDir, { recursive: true });
+
+  const unzipResult = ChildProcess.spawnSync(
+    "ditto",
+    ["-x", "-k", downloadedZipPath, extractedDir],
+    {
+      encoding: "utf8",
+    },
+  );
+  if (unzipResult.status !== 0) {
+    const details = `${unzipResult.stdout ?? ""}\n${unzipResult.stderr ?? ""}`.trim();
+    throw new Error(details || `ditto exited with status ${unzipResult.status ?? "unknown"}`);
+  }
+
+  const extractedAppPath = findFirstAppBundlePath(extractedDir);
+  if (!extractedAppPath) {
+    throw new Error("Could not find the extracted app bundle inside the downloaded update.");
+  }
+
+  const installerScriptPath = Path.join(stagingDir, "install-update.sh");
+  const installerScript = buildMacManualUpdateInstallScript({
+    appPid: process.pid,
+    sourceAppPath: extractedAppPath,
+    targetAppPath: currentAppPath,
+    stagingDir,
+  });
+  FS.writeFileSync(installerScriptPath, installerScript, { mode: 0o700 });
+
+  const installerProcess = ChildProcess.spawn("/bin/sh", [installerScriptPath], {
+    detached: true,
+    stdio: "ignore",
+  });
+  installerProcess.unref();
 }
 
 async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed: boolean }> {
@@ -798,7 +898,12 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
   clearUpdatePollTimer();
   try {
     await stopBackendAndWaitForExit();
-    autoUpdater.quitAndInstall();
+    if (process.platform === "darwin" && !isMacDeveloperIdSignedBuild()) {
+      installDownloadedUnsignedMacUpdate();
+      app.quit();
+    } else {
+      autoUpdater.quitAndInstall();
+    }
     return { accepted: true, completed: true };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
@@ -810,13 +915,15 @@ async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed
 }
 
 function configureAutoUpdater(): void {
-  const enabled = shouldEnableAutoUpdates();
+  const disabledReason = resolveAutoUpdateDisabledReason();
+  const enabled = disabledReason === null;
   setUpdateState({
     ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
     enabled,
     status: enabled ? "idle" : "disabled",
   });
   if (!enabled) {
+    console.info(`[desktop-updater] Automatic updates disabled: ${disabledReason}`);
     return;
   }
   updaterConfigured = true;
@@ -857,6 +964,7 @@ function configureAutoUpdater(): void {
     console.info("[desktop-updater] Looking for updates...");
   });
   autoUpdater.on("update-available", (info) => {
+    clearDownloadedUpdateFiles();
     setUpdateState(
       reduceDesktopUpdateStateOnUpdateAvailable(
         updateState,
@@ -868,6 +976,7 @@ function configureAutoUpdater(): void {
     console.info(`[desktop-updater] Update available: ${info.version}`);
   });
   autoUpdater.on("update-not-available", () => {
+    clearDownloadedUpdateFiles();
     setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
     lastLoggedDownloadMilestone = -1;
     console.info("[desktop-updater] No updates available.");
