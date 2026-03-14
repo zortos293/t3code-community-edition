@@ -80,7 +80,6 @@ import {
   type PendingUserInput,
   type ProviderPickerKind,
   PROVIDER_OPTIONS,
-  deriveWorkLogEntries,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
@@ -249,7 +248,10 @@ import {
   computeMessageDurationStart,
   normalizeCompactToolLabel,
 } from "./chat/MessagesTimeline.logic";
-import { resolveProviderHealthBannerProvider } from "./ChatView.logic";
+import {
+  deriveVisibleThreadWorkLogEntries,
+  resolveProviderHealthBannerProvider,
+} from "./ChatView.logic";
 
 function formatMessageMeta(
   createdAt: string,
@@ -1526,8 +1528,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveVisibleThreadWorkLogEntries(threadActivities),
+    [threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),

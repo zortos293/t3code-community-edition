@@ -1,9 +1,15 @@
-import { ProjectId, type ProviderKind, type ThreadId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type OrchestrationThreadActivity,
+  type ProviderKind,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type ChatMessage, type Thread } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { getAppModelOptions } from "../appSettings";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
+import { deriveWorkLogEntries, type WorkLogEntry } from "../session-logic";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
@@ -131,4 +137,10 @@ export function resolveProviderHealthBannerProvider(input: {
   selectedProvider: ProviderKind;
 }): ProviderKind {
   return input.sessionProvider ?? input.selectedProvider;
+}
+
+export function deriveVisibleThreadWorkLogEntries(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): WorkLogEntry[] {
+  return deriveWorkLogEntries(activities, undefined);
 }
