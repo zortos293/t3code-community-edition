@@ -68,6 +68,7 @@ const testLayer = Layer.mergeAll(
     toggle: () => Effect.succeed({ name: "", enabled: false }),
     update: () => Effect.succeed({ success: true, message: "" }),
     browse: Effect.succeed({ servers: [] }),
+    getCopilotSdkMcpServers: Effect.succeed({}),
   } satisfies McpManagerShape),
   AnalyticsService.layerTest,
   FetchHttpClient.layer,

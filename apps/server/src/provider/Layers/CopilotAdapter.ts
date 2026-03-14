@@ -27,6 +27,7 @@ import { Effect, Layer, Queue, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { McpManager, type CopilotSdkMcpServers } from "../../mcp/McpManager.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -448,6 +449,7 @@ function createSessionRecord(input: {
 const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig;
+    const mcpManager = yield* McpManager;
     const nativeEventLogger = options?.nativeEventLogger;
     const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, ActiveCopilotSession>();
@@ -1298,6 +1300,18 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           reasoningEffort,
         });
 
+        // Read enabled MCP servers to pass to the SDK session.
+        // Gracefully degrade: if reading fails, start the session without MCP.
+        // Cast to `any` because the raw JSON config is structurally compatible with
+        // the SDK's MCPServerConfig but our type is Record<string, Record<string, unknown>>.
+        const mcpServers = yield* mcpManager.getCopilotSdkMcpServers.pipe(
+          Effect.catch(() => Effect.succeed({} as CopilotSdkMcpServers)),
+        );
+        const mcpSpread =
+          Object.keys(mcpServers).length > 0
+            ? { mcpServers: mcpServers as Record<string, any> }
+            : {};
+
         const session = yield* Effect.tryPromise({
           try: async () => {
             if (resumeSessionId) {
@@ -1307,6 +1321,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                 ...(reasoningEffort ? { reasoningEffort } : {}),
                 ...(input.cwd ? { workingDirectory: input.cwd } : {}),
                 ...(configDir ? { configDir } : {}),
+                ...mcpSpread,
                 streaming: true,
               });
             }
@@ -1316,6 +1331,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               ...(reasoningEffort ? { reasoningEffort } : {}),
               ...(input.cwd ? { workingDirectory: input.cwd } : {}),
               ...(configDir ? { configDir } : {}),
+              ...mcpSpread,
               streaming: true,
             });
           },

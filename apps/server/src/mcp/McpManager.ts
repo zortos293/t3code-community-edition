@@ -39,6 +39,9 @@ export class McpError extends Schema.TaggedErrorClass<McpError>()("McpError", {
 
 // ── Service Interface ────────────────────────────────────────────────
 
+/** Raw MCP server configs in SDK-compatible format (preserves env, cwd, timeout, etc.). */
+export type CopilotSdkMcpServers = Record<string, Record<string, unknown>>;
+
 export interface McpManagerShape {
   readonly list: Effect.Effect<McpListResult, McpError>;
   readonly add: (input: McpAddInput) => Effect.Effect<McpAddResult, McpError>;
@@ -46,6 +49,8 @@ export interface McpManagerShape {
   readonly toggle: (input: McpToggleInput) => Effect.Effect<McpToggleResult, McpError>;
   readonly update: (input: McpUpdateInput) => Effect.Effect<McpUpdateResult, McpError>;
   readonly browse: Effect.Effect<McpBrowseResult, McpError>;
+  /** Return the raw mcpServers object from ~/.copilot/mcp-config.json for SDK passthrough. */
+  readonly getCopilotSdkMcpServers: Effect.Effect<CopilotSdkMcpServers, McpError>;
 }
 
 export class McpManager extends ServiceMap.Service<McpManager, McpManagerShape>()(
@@ -639,6 +644,18 @@ function updateServer(input: McpUpdateInput): Effect.Effect<McpUpdateResult, Mcp
   });
 }
 
+// ── Copilot SDK MCP passthrough ──────────────────────────────────────
+
+function getCopilotSdkMcpServers(): Effect.Effect<CopilotSdkMcpServers, McpError> {
+  return Effect.tryPromise({
+    try: async () => {
+      const config = await readCopilotConfig();
+      return config.mcpServers ?? {};
+    },
+    catch: (cause) => new McpError({ message: "Failed to read Copilot MCP config", cause }),
+  });
+}
+
 // ── Live Layer ───────────────────────────────────────────────────────
 
 export const McpManagerLive = Layer.succeed(McpManager, {
@@ -648,4 +665,5 @@ export const McpManagerLive = Layer.succeed(McpManager, {
   toggle: toggleServer,
   update: updateServer,
   browse: browseCatalog(),
+  getCopilotSdkMcpServers: getCopilotSdkMcpServers(),
 });

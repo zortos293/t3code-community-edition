@@ -37,11 +37,12 @@ import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { McpManager } from "./mcp/McpManager";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
   ProviderUnsupportedError,
-  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService
+  SqlClient.SqlClient | ServerConfig | FileSystem.FileSystem | AnalyticsService | McpManager
 > {
   return Effect.gen(function* () {
     const { stateDir } = yield* ServerConfig;

@@ -8,10 +8,21 @@ import { afterAll, it, vi } from "@effect/vitest";
 import { Effect, Fiber, Layer, Stream } from "effect";
 
 import { ServerConfig } from "../../config.ts";
+import { McpManager, type McpManagerShape } from "../../mcp/McpManager.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
+
+const McpManagerTest = Layer.succeed(McpManager, {
+  list: Effect.succeed({ servers: [] }),
+  add: () => Effect.succeed({ success: true, message: "" }),
+  remove: () => Effect.succeed({ success: true, message: "" }),
+  toggle: () => Effect.succeed({ name: "", enabled: false }),
+  update: () => Effect.succeed({ success: true, message: "" }),
+  browse: Effect.succeed({ servers: [] }),
+  getCopilotSdkMcpServers: Effect.succeed({}),
+} satisfies McpManagerShape);
 
 class FakeCopilotSession {
   public readonly sessionId: string;
@@ -124,6 +135,7 @@ const modeLayer = it.layer(
     clientFactory: () => modeClient,
   }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(McpManagerTest),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -171,6 +183,7 @@ const planLayer = it.layer(
     clientFactory: () => planClient,
   }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(McpManagerTest),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
