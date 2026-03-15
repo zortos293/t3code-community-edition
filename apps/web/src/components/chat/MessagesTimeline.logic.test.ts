@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import { BotIcon, HammerIcon, SearchIcon, TerminalIcon, WrenchIcon } from "lucide-react";
+import {
+  computeMessageDurationStart,
+  normalizeCompactToolLabel,
+  resolveWorkEntryIcon,
+} from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -141,5 +146,55 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("resolveWorkEntryIcon", () => {
+  it("uses the tool name for dynamic bash calls", () => {
+    expect(
+      resolveWorkEntryIcon({
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        toolTitle: "bash",
+      }),
+    ).toBe(TerminalIcon);
+  });
+
+  it("uses search styling for dynamic search tools", () => {
+    expect(
+      resolveWorkEntryIcon({
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        detail: "rg TODO src",
+      }),
+    ).toBe(SearchIcon);
+  });
+
+  it("falls back to a generic tool icon for dynamic tools", () => {
+    expect(
+      resolveWorkEntryIcon({
+        tone: "tool",
+        itemType: "dynamic_tool_call",
+        toolTitle: "custom helper",
+      }),
+    ).toBe(WrenchIcon);
+  });
+
+  it("uses a bot fallback for collab agent calls", () => {
+    expect(
+      resolveWorkEntryIcon({
+        tone: "tool",
+        itemType: "collab_agent_tool_call",
+      }),
+    ).toBe(BotIcon);
+  });
+
+  it("keeps task progress on the hammer icon", () => {
+    expect(
+      resolveWorkEntryIcon({
+        tone: "tool",
+        activityKind: "task.progress",
+      }),
+    ).toBe(HammerIcon);
   });
 });

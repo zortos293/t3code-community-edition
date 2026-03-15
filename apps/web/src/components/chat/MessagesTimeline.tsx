@@ -14,14 +14,8 @@ import {
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
-  EyeIcon,
-  GlobeIcon,
-  HammerIcon,
   type LucideIcon,
-  SquarePenIcon,
-  TerminalIcon,
   Undo2Icon,
-  WrenchIcon,
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
@@ -32,7 +26,11 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  computeMessageDurationStart,
+  normalizeCompactToolLabel,
+  resolveWorkEntryIcon,
+} from "./MessagesTimeline.logic";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "../../appSettings";
 import { formatTimestamp } from "../../timestampFormat";
@@ -685,28 +683,7 @@ function workEntryPreview(
 }
 
 function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
-  if (workEntry.requestKind === "command") return TerminalIcon;
-  if (workEntry.requestKind === "file-read") return EyeIcon;
-  if (workEntry.requestKind === "file-change") return SquarePenIcon;
-
-  if (workEntry.itemType === "command_execution" || workEntry.command) {
-    return TerminalIcon;
-  }
-  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
-    return SquarePenIcon;
-  }
-  if (workEntry.itemType === "web_search") return GlobeIcon;
-  if (workEntry.itemType === "image_view") return EyeIcon;
-
-  switch (workEntry.itemType) {
-    case "mcp_tool_call":
-      return WrenchIcon;
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
-      return HammerIcon;
-  }
-
-  return workToneIcon(workEntry.tone).icon;
+  return resolveWorkEntryIcon(workEntry);
 }
 
 function capitalizePhrase(value: string): string {
