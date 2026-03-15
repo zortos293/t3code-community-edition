@@ -5,8 +5,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   CopilotClient,
   type CopilotClientOptions,
+  type PermissionRequest,
+  type PermissionRequestResult,
   type SessionEvent,
-  approveAll,
 } from "@github/copilot-sdk";
 import { DEFAULT_MODEL_BY_PROVIDER } from "@t3tools/contracts";
 
@@ -161,6 +162,10 @@ function extractJsonCandidate(text: string): string {
   }
 
   return trimmed;
+}
+
+function denyCopilotPermissionRequest(_request: PermissionRequest): PermissionRequestResult {
+  return { kind: "denied-by-rules" };
 }
 
 function extractLastCopilotAssistantText(events: ReadonlyArray<SessionEvent>): string {
@@ -473,7 +478,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
             workingDirectory: cwd,
             model: COPILOT_MODEL,
             streaming: true,
-            onPermissionRequest: approveAll,
+            availableTools: [],
+            onPermissionRequest: denyCopilotPermissionRequest,
           });
 
           const response = await session.sendAndWait(
