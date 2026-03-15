@@ -77,7 +77,7 @@ function collapsedSegmentLength(
   return segment.type === "text" ? segment.text.length : 1;
 }
 
-function clampCollapsedComposerCursor(
+function clampCollapsedComposerCursorForSegments(
   segments: ReadonlyArray<{ type: "text"; text: string } | { type: "mention" } | { type: "skill" }>,
   cursorInput: number,
 ): number {
@@ -91,6 +91,49 @@ function clampCollapsedComposerCursor(
   return Math.max(0, Math.min(collapsedLength, Math.floor(cursorInput)));
 }
 
+export function clampCollapsedComposerCursor(text: string, cursorInput: number): number {
+  return clampCollapsedComposerCursorForSegments(
+    splitPromptIntoComposerSegments(text),
+    cursorInput,
+  );
+}
+
+export function collapseExpandedComposerCursor(text: string, cursorInput: number): number {
+  const expandedCursor = clampCursor(text, cursorInput);
+  const segments = splitPromptIntoComposerSegments(text);
+  if (segments.length === 0) {
+    return expandedCursor;
+  }
+
+  let remaining = expandedCursor;
+  let collapsedCursor = 0;
+
+  for (const segment of segments) {
+    if (segment.type === "mention" || segment.type === "skill") {
+      const expandedLength =
+        (segment.type === "mention" ? segment.path.length : segment.name.length) + 1;
+      if (remaining === 0) {
+        return collapsedCursor;
+      }
+      if (remaining <= expandedLength) {
+        return collapsedCursor + 1;
+      }
+      remaining -= expandedLength;
+      collapsedCursor += 1;
+      continue;
+    }
+
+    const segmentLength = segment.text.length;
+    if (remaining <= segmentLength) {
+      return collapsedCursor + remaining;
+    }
+    remaining -= segmentLength;
+    collapsedCursor += segmentLength;
+  }
+
+  return collapsedCursor;
+}
+
 export function isCollapsedCursorAdjacentToMention(
   text: string,
   cursorInput: number,
@@ -101,7 +144,15 @@ export function isCollapsedCursorAdjacentToMention(
     return false;
   }
 
-  const cursor = clampCollapsedComposerCursor(segments, cursorInput);
+  const collapsedLength = segments.reduce(
+    (total, segment) => total + collapsedSegmentLength(segment),
+    0,
+  );
+  if (Number.isFinite(cursorInput) && cursorInput > collapsedLength) {
+    return false;
+  }
+
+  const cursor = clampCollapsedComposerCursorForSegments(segments, cursorInput);
   let collapsedOffset = 0;
 
   for (const segment of segments) {

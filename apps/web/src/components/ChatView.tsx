@@ -58,6 +58,8 @@ import { skillsListQueryOptions } from "~/lib/skillsReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
+  clampCollapsedComposerCursor,
+  collapseExpandedComposerCursor,
   type ComposerSlashCommand,
   type ComposerTrigger,
   type ComposerTriggerKind,
@@ -78,11 +80,9 @@ import {
   type PendingUserInput,
   type ProviderPickerKind,
   PROVIDER_OPTIONS,
-  deriveWorkLogEntries,
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
-  formatTimestamp,
   type WorkLogEntry,
 } from "../session-logic";
 import { AUTO_SCROLL_BOTTOM_THRESHOLD_PX, isScrollContainerNearBottom } from "../chat-scroll";
@@ -109,7 +109,7 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
-  MAX_THREAD_TERMINAL_COUNT,
+  MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
   type Thread,
   type TurnDiffFileChange,
@@ -148,6 +148,7 @@ import {
   DiffIcon,
   EllipsisIcon,
   FolderClosedIcon,
+  GlobeIcon,
   HammerIcon,
   ListTodoIcon,
   LockIcon,
@@ -225,6 +226,7 @@ import {
   getAppModelOptions,
   resolveAppModelSelection,
   type BuiltInAppModelOption,
+  type TimestampFormat,
   useAppSettings,
 } from "../appSettings";
 import {
@@ -241,10 +243,23 @@ import { clamp } from "effect/Number";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import { formatTimestamp } from "../timestampFormat";
+import {
+  computeMessageDurationStart,
+  normalizeCompactToolLabel,
+} from "./chat/MessagesTimeline.logic";
+import {
+  deriveVisibleThreadWorkLogEntries,
+  resolveProviderHealthBannerProvider,
+} from "./ChatView.logic";
 
-function formatMessageMeta(createdAt: string, duration: string | null): string {
-  if (!duration) return formatTimestamp(createdAt);
-  return `${formatTimestamp(createdAt)} • ${duration}`;
+function formatMessageMeta(
+  createdAt: string,
+  duration: string | null,
+  timestampFormat: TimestampFormat,
+): string {
+  if (!duration) return formatTimestamp(createdAt, timestampFormat);
+  return `${formatTimestamp(createdAt, timestampFormat)} • ${duration}`;
 }
 
 function formatWorkingTimer(startIso: string, endIso: string): string | null {
@@ -319,24 +334,24 @@ function workToneIcon(tone: "thinking" | "tool" | "info" | "error") {
   if (tone === "error") {
     return {
       icon: CircleAlertIcon,
-      className: "text-black/85 dark:text-white/90",
+      className: "text-foreground/92",
     };
   }
   if (tone === "thinking") {
     return {
       icon: BotIcon,
-      className: "text-black/85 dark:text-white/90",
+      className: "text-foreground/92",
     };
   }
   if (tone === "info") {
     return {
       icon: CheckIcon,
-      className: "text-black/85 dark:text-white/90",
+      className: "text-foreground/92",
     };
   }
   return {
     icon: ZapIcon,
-    className: "text-black/85 dark:text-white/90",
+    className: "text-foreground/92",
   };
 }
 
@@ -361,6 +376,23 @@ function workEntryIcon(workEntry: WorkLogEntry): LucideIcon {
   if (workEntry.requestKind === "command") return TerminalIcon;
   if (workEntry.requestKind === "file-read") return EyeIcon;
   if (workEntry.requestKind === "file-change") return SquarePenIcon;
+
+  if (workEntry.itemType === "command_execution" || workEntry.command) {
+    return TerminalIcon;
+  }
+  if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
+    return SquarePenIcon;
+  }
+  if (workEntry.itemType === "web_search") return GlobeIcon;
+  if (workEntry.itemType === "image_view") return EyeIcon;
+
+  switch (workEntry.itemType) {
+    case "mcp_tool_call":
+      return WrenchIcon;
+    case "dynamic_tool_call":
+    case "collab_agent_tool_call":
+      return HammerIcon;
+  }
 
   const haystack = [
     workEntry.label,
@@ -397,21 +429,6 @@ function workEntryIcon(workEntry: WorkLogEntry): LucideIcon {
   if (haystack.includes("edit") || haystack.includes("patch")) return WrenchIcon;
   if (haystack.includes("file")) return FileIcon;
 
-  switch (workEntry.itemType) {
-    case "command_execution":
-      return TerminalIcon;
-    case "file_change":
-      return SquarePenIcon;
-    case "mcp_tool_call":
-      return WrenchIcon;
-    case "dynamic_tool_call":
-    case "collab_agent_tool_call":
-      return HammerIcon;
-    case "web_search":
-      return SearchIcon;
-    case "image_view":
-      return EyeIcon;
-  }
   if (haystack.includes("task")) return HammerIcon;
 
   if (workEntry.activityKind === "turn.plan.updated") return ListTodoIcon;
@@ -432,20 +449,9 @@ function capitalizePhrase(value: string): string {
 
 function toolWorkEntryHeading(workEntry: WorkLogEntry): string {
   if (!workEntry.toolTitle) {
-    return capitalizePhrase(workEntry.label);
+    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
   }
-
-  const statusLabel =
-    workEntry.toolStatus === "failed"
-      ? "failed"
-      : workEntry.toolStatus === "declined"
-        ? "declined"
-        : workEntry.toolStatus === "inProgress" || workEntry.activityKind === "tool.updated"
-          ? "running"
-          : workEntry.activityKind === "tool.started"
-            ? "started"
-            : "complete";
-  return capitalizePhrase(`${workEntry.toolTitle} ${statusLabel}`);
+  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
 function primaryWorkEntryPath(workEntry: WorkLogEntry): string | null {
@@ -522,8 +528,9 @@ function isRichToolWorkEntry(workEntry: WorkLogEntry): boolean {
 const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
   workEntry: WorkLogEntry;
   workEntryIndex: number;
+  timestampFormat: TimestampFormat;
 }) {
-  const { workEntry, workEntryIndex } = props;
+  const { workEntry, workEntryIndex, timestampFormat } = props;
   const [open, setOpen] = useState(false);
   const { settings } = useAppSettings();
   const iconConfig = workToneIcon(workEntry.tone);
@@ -591,7 +598,7 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
         </Badge>
       )}
       <span className="shrink-0 text-[9px] text-muted-foreground/35">
-        {formatTimestamp(workEntry.createdAt)}
+        {formatTimestamp(workEntry.createdAt, timestampFormat)}
       </span>
     </div>
   );
@@ -688,12 +695,14 @@ const ToolWorkEntryRow = memo(function ToolWorkEntryRow(props: {
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: WorkLogEntry;
   workEntryIndex: number;
+  timestampFormat: TimestampFormat;
 }) {
-  const { workEntry, workEntryIndex } = props;
+  const { workEntry, workEntryIndex, timestampFormat } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
+  const heading = toolWorkEntryHeading(workEntry);
   const preview = workEntryPreview(workEntry);
-  const displayText = preview ? `${workEntry.label} - ${preview}` : workEntry.label;
+  const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
 
@@ -720,13 +729,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             title={displayText}
           >
             <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-              {workEntry.label}
+              {heading}
             </span>
             {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
           </p>
         </div>
         <span className="shrink-0 text-[9px] text-muted-foreground/35">
-          {formatTimestamp(workEntry.createdAt)}
+          {formatTimestamp(workEntry.createdAt, timestampFormat)}
         </span>
       </div>
       {hasChangedFiles && !previewIsChangedFiles && (
@@ -1057,6 +1066,17 @@ const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   );
 });
 
+const extendReplacementRangeForTrailingSpace = (
+  text: string,
+  rangeEnd: number,
+  replacement: string,
+): number => {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
+};
+
 interface ChatViewProps {
   threadId: ThreadId;
 }
@@ -1069,6 +1089,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const { settings } = useAppSettings();
+  const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
@@ -1114,6 +1135,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (store) => store.draftThreadsByThreadId[threadId] ?? null,
   );
   const promptRef = useRef(prompt);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -1151,7 +1173,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
-  const [composerCursor, setComposerCursor] = useState(() => prompt.length);
+  const [composerCursor, setComposerCursor] = useState(() =>
+    collapseExpandedComposerCursor(prompt, prompt.length),
+  );
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
     detectComposerTrigger(prompt, prompt.length),
   );
@@ -1506,8 +1530,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
-    [activeLatestTurn?.turnId, threadActivities],
+    () => deriveVisibleThreadWorkLogEntries(threadActivities),
+    [threadActivities],
   );
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
@@ -1579,23 +1603,47 @@ export default function ChatView({ threadId }: ChatViewProps) {
     pendingUserInputs.length > 0 ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  const lastSyncedPendingInputRef = useRef<{
+    requestId: string | null;
+    questionId: string | null;
+  } | null>(null);
   useEffect(() => {
-    if (!activePendingProgress) {
+    const nextCustomAnswer = activePendingProgress?.customAnswer;
+    if (typeof nextCustomAnswer !== "string") {
+      lastSyncedPendingInputRef.current = null;
       return;
     }
-    promptRef.current = activePendingProgress.customAnswer;
-    setComposerCursor(activePendingProgress.customAnswer.length);
+    const nextRequestId = activePendingUserInput?.requestId ?? null;
+    const nextQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
+    const questionChanged =
+      lastSyncedPendingInputRef.current?.requestId !== nextRequestId ||
+      lastSyncedPendingInputRef.current?.questionId !== nextQuestionId;
+    const textChangedExternally = promptRef.current !== nextCustomAnswer;
+
+    lastSyncedPendingInputRef.current = {
+      requestId: nextRequestId,
+      questionId: nextQuestionId,
+    };
+
+    if (!questionChanged && !textChangedExternally) {
+      return;
+    }
+
+    promptRef.current = nextCustomAnswer;
+    const nextCursor = collapseExpandedComposerCursor(nextCustomAnswer, nextCustomAnswer.length);
+    setComposerCursor(nextCursor);
     setComposerTrigger(
       detectComposerTrigger(
-        activePendingProgress.customAnswer,
-        expandCollapsedComposerCursor(
-          activePendingProgress.customAnswer,
-          activePendingProgress.customAnswer.length,
-        ),
+        nextCustomAnswer,
+        expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
       ),
     );
     setComposerHighlightedItemId(null);
-  }, [activePendingProgress, activePendingUserInput?.requestId]);
+  }, [
+    activePendingProgress?.activeQuestion?.id,
+    activePendingProgress?.customAnswer,
+    activePendingUserInput?.requestId,
+  ]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -1950,7 +1998,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const availableEditors = serverConfigQuery.data?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
-  const activeProvider = activeThread?.session?.provider ?? "codex";
+  const activeProvider = resolveProviderHealthBannerProvider({
+    sessionProvider: activeThread?.session?.provider ?? null,
+    selectedProvider,
+  });
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === activeProvider) ?? null,
     [activeProvider, providerStatuses],
@@ -2001,7 +2052,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (activeThread.messages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
-  const hasReachedTerminalLimit = terminalState.terminalIds.length >= MAX_THREAD_TERMINAL_COUNT;
+  const hasReachedTerminalLimit = terminalState.terminalIds.length >= MAX_TERMINALS_PER_GROUP;
   const setThreadError = useCallback(
     (targetThreadId: ThreadId | null, error: string | null) => {
       if (!targetThreadId) return;
@@ -2123,7 +2174,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const isBaseTerminalBusy = terminalState.runningTerminalIds.includes(baseTerminalId);
       const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
       const shouldCreateNewTerminal =
-        wantsNewTerminal && terminalState.terminalIds.length < MAX_THREAD_TERMINAL_COUNT;
+        wantsNewTerminal && terminalState.terminalIds.length < MAX_TERMINALS_PER_GROUP;
       const targetTerminalId = shouldCreateNewTerminal
         ? `terminal-${randomUUID()}`
         : baseTerminalId;
@@ -2536,6 +2587,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     }
 
+    setShowScrollToBottom(!shouldAutoScrollRef.current);
     lastKnownScrollTopRef.current = currentScrollTop;
   }, []);
   const onMessagesWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
@@ -2707,7 +2759,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     promptRef.current = prompt;
-    setComposerCursor((existing) => Math.min(Math.max(0, existing), prompt.length));
+    setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
   }, [prompt]);
 
   useEffect(() => {
@@ -2720,7 +2772,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     setSendPhase("idle");
     setSendStartedAt(null);
     setComposerHighlightedItemId(null);
-    setComposerCursor(promptRef.current.length);
+    setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
     setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
@@ -2998,6 +3050,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
+
+    if (pendingUserInputs.length > 0) {
+      toastManager.add({
+        type: "error",
+        title: "Attach images after answering plan questions.",
+      });
+      return;
+    }
 
     const nextImages: ComposerImageAttachment[] = [];
     let nextImageCount = composerImagesRef.current.length;
@@ -3410,7 +3470,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         });
         promptRef.current = trimmed;
         setPrompt(trimmed);
-        setComposerCursor(trimmed.length);
+        setComposerCursor(collapseExpandedComposerCursor(trimmed, trimmed.length));
         addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageForRetry));
         setComposerTrigger(detectComposerTrigger(trimmed, trimmed.length));
       }
@@ -3528,7 +3588,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
-    (questionId: string, value: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+    (
+      questionId: string,
+      value: string,
+      nextCursor: number,
+      expandedCursor: number,
+      cursorAdjacentToMention: boolean,
+    ) => {
       if (!activePendingUserInput) {
         return;
       }
@@ -3545,9 +3611,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }));
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention
-          ? null
-          : detectComposerTrigger(value, expandCollapsedComposerCursor(value, nextCursor)),
+        cursorAdjacentToMention ? null : detectComposerTrigger(value, expandedCursor),
       );
     },
     [activePendingUserInput],
@@ -3890,6 +3954,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         return false;
       }
       const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
+      const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
@@ -3906,33 +3971,42 @@ export default function ChatView({ threadId }: ChatViewProps) {
       } else {
         setPrompt(next.text);
       }
-      setComposerCursor(next.cursor);
-      setComposerTrigger(detectComposerTrigger(next.text, next.cursor));
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
+      );
       window.requestAnimationFrame(() => {
-        composerEditorRef.current?.focusAt(next.cursor);
+        composerEditorRef.current?.focusAt(nextCursor);
       });
       return true;
     },
     [activePendingProgress?.activeQuestion, activePendingUserInput, setPrompt],
   );
 
-  const readComposerSnapshot = useCallback((): { value: string; cursor: number } => {
+  const readComposerSnapshot = useCallback((): {
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+  } => {
     const editorSnapshot = composerEditorRef.current?.readSnapshot();
     if (editorSnapshot) {
       return editorSnapshot;
     }
-    return { value: promptRef.current, cursor: composerCursor };
+    return {
+      value: promptRef.current,
+      cursor: composerCursor,
+      expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+    };
   }, [composerCursor]);
 
   const resolveActiveComposerTrigger = useCallback((): {
-    snapshot: { value: string; cursor: number };
+    snapshot: { value: string; cursor: number; expandedCursor: number };
     trigger: ComposerTrigger | null;
   } => {
     const snapshot = readComposerSnapshot();
-    const expandedCursor = expandCollapsedComposerCursor(snapshot.value, snapshot.cursor);
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, expandedCursor),
+      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
     };
   }, [readComposerSnapshot]);
 
@@ -3945,13 +4019,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
-      const expectedToken = snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd);
       if (item.type === "path") {
+        const replacement = `@${item.path} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
         const applied = applyPromptReplacement(
           trigger.rangeStart,
-          trigger.rangeEnd,
-          `@${item.path} `,
-          { expectedText: expectedToken },
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -3963,7 +4042,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           trigger.rangeStart,
           trigger.rangeEnd,
           `$${item.skillName} `,
-          { expectedText: expectedToken },
+          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
         );
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -3972,9 +4051,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       if (item.type === "slash-command") {
         if (item.command === "model") {
-          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/model ", {
-            expectedText: expectedToken,
-          });
+          const replacement = "/model ";
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
           if (applied) {
             setComposerHighlightedItemId(null);
           }
@@ -3982,7 +4070,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         if (item.command === "skills") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/skills ", {
-            expectedText: expectedToken,
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
           });
           if (applied) {
             setComposerHighlightedItemId(null);
@@ -3991,7 +4079,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-          expectedText: expectedToken,
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
         if (applied) {
           setComposerHighlightedItemId(null);
@@ -4000,7 +4088,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       onProviderModelSelect(item.provider, item.model);
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-        expectedText: expectedToken,
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
       });
       if (applied) {
         setComposerHighlightedItemId(null);
@@ -4042,12 +4130,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     (composerTriggerKind === "slash-skill" && skillsQuery.isLoading);
 
   const onPromptChange = useCallback(
-    (nextPrompt: string, nextCursor: number, cursorAdjacentToMention: boolean) => {
+    (
+      nextPrompt: string,
+      nextCursor: number,
+      expandedCursor: number,
+      cursorAdjacentToMention: boolean,
+    ) => {
       if (activePendingProgress?.activeQuestion && activePendingUserInput) {
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
           nextCursor,
+          expandedCursor,
           cursorAdjacentToMention,
         );
         return;
@@ -4056,12 +4150,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       setPrompt(nextPrompt);
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention
-          ? null
-          : detectComposerTrigger(
-              nextPrompt,
-              expandCollapsedComposerCursor(nextPrompt, nextCursor),
-            ),
+        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
       );
     },
     [
@@ -4212,44 +4301,62 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {/* Messages */}
-          <div
-            ref={setMessagesScrollContainerRef}
-            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
-            onScroll={onMessagesScroll}
-            onClickCapture={onMessagesClickCapture}
-            onWheel={onMessagesWheel}
-            onPointerDown={onMessagesPointerDown}
-            onPointerUp={onMessagesPointerUp}
-            onPointerCancel={onMessagesPointerCancel}
-            onTouchStart={onMessagesTouchStart}
-            onTouchMove={onMessagesTouchMove}
-            onTouchEnd={onMessagesTouchEnd}
-            onTouchCancel={onMessagesTouchEnd}
-          >
-            <MessagesTimeline
-              key={activeThread.id}
-              hasMessages={timelineEntries.length > 0}
-              isWorking={isWorking}
-              activeTurnInProgress={isWorking || !latestTurnSettled}
-              activeTurnStartedAt={activeWorkStartedAt}
-              scrollContainer={messagesScrollElement}
-              timelineEntries={timelineEntries}
-              completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-              completionSummary={completionSummary}
-              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-              nowIso={nowIso}
-              expandedWorkGroups={expandedWorkGroups}
-              onToggleWorkGroup={onToggleWorkGroup}
-              onOpenTurnDiff={onOpenTurnDiff}
-              revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-              onRevertUserMessage={onRevertUserMessage}
-              isRevertingCheckpoint={isRevertingCheckpoint}
-              onImageExpand={onExpandTimelineImage}
-              markdownCwd={gitCwd ?? undefined}
-              resolvedTheme={resolvedTheme}
-              workspaceRoot={activeProject?.cwd ?? undefined}
-            />
+          {/* Messages Wrapper */}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {/* Messages */}
+            <div
+              ref={setMessagesScrollContainerRef}
+              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-y-contain px-3 py-3 sm:px-5 sm:py-4"
+              onScroll={onMessagesScroll}
+              onClickCapture={onMessagesClickCapture}
+              onWheel={onMessagesWheel}
+              onPointerDown={onMessagesPointerDown}
+              onPointerUp={onMessagesPointerUp}
+              onPointerCancel={onMessagesPointerCancel}
+              onTouchStart={onMessagesTouchStart}
+              onTouchMove={onMessagesTouchMove}
+              onTouchEnd={onMessagesTouchEnd}
+              onTouchCancel={onMessagesTouchEnd}
+            >
+              <MessagesTimeline
+                key={activeThread.id}
+                hasMessages={timelineEntries.length > 0}
+                isWorking={isWorking}
+                activeTurnInProgress={isWorking || !latestTurnSettled}
+                activeTurnStartedAt={activeWorkStartedAt}
+                scrollContainer={messagesScrollElement}
+                timelineEntries={timelineEntries}
+                completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+                completionSummary={completionSummary}
+                turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                nowIso={nowIso}
+                expandedWorkGroups={expandedWorkGroups}
+                onToggleWorkGroup={onToggleWorkGroup}
+                onOpenTurnDiff={onOpenTurnDiff}
+                revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                onRevertUserMessage={onRevertUserMessage}
+                isRevertingCheckpoint={isRevertingCheckpoint}
+                onImageExpand={onExpandTimelineImage}
+                markdownCwd={gitCwd ?? undefined}
+                resolvedTheme={resolvedTheme}
+                timestampFormat={timestampFormat}
+                workspaceRoot={activeProject?.cwd ?? undefined}
+              />
+            </div>
+
+            {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
+            {showScrollToBottom && (
+              <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
+                <button
+                  type="button"
+                  onClick={() => scrollMessagesToBottom("smooth")}
+                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  <ChevronDownIcon className="size-3.5" />
+                  Scroll to bottom
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Input bar */}
@@ -4293,7 +4400,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                   <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                     <ComposerPendingUserInputPanel
                       pendingUserInputs={pendingUserInputs}
-                      respondingRequestIds={respondingUserInputRequestIds}
+                      respondingRequestIds={respondingRequestIds}
                       answers={activePendingDraftAnswers}
                       questionIndex={activePendingQuestionIndex}
                       onSelectOption={onSelectActivePendingUserInputOption}
@@ -4628,7 +4735,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       ) : phase === "running" ? (
                         <button
                           type="button"
-                          className="flex size-8 items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+                          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
                           onClick={() => void onInterrupt()}
                           aria-label="Stop generation"
                         >
@@ -4792,6 +4899,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             activeProposedPlan={activeProposedPlan}
             markdownCwd={gitCwd ?? undefined}
             workspaceRoot={activeProject?.cwd ?? undefined}
+            timestampFormat={timestampFormat}
             onClose={() => {
               setPlanSidebarOpen(false);
               // Track that the user explicitly dismissed for this turn so auto-open won't fight them.
@@ -5717,6 +5825,7 @@ interface MessagesTimelineProps {
   onImageExpand: (preview: ExpandedImagePreview) => void;
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
+  timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
 }
 
@@ -5736,6 +5845,7 @@ type TimelineRow =
       id: string;
       createdAt: string;
       message: TimelineMessage;
+      durationStart: string;
       showCompletionDivider: boolean;
     }
   | {
@@ -5771,6 +5881,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
   onImageExpand,
   markdownCwd,
   resolvedTheme,
+  timestampFormat,
   workspaceRoot,
 }: MessagesTimelineProps) {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
@@ -5803,6 +5914,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
 
   const rows = useMemo<TimelineRow[]>(() => {
     const nextRows: TimelineRow[] = [];
+    const durationStartByMessageId = computeMessageDurationStart(
+      timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
+    );
 
     for (let index = 0; index < timelineEntries.length; index += 1) {
       const timelineEntry = timelineEntries[index];
@@ -5844,6 +5958,8 @@ const MessagesTimeline = memo(function MessagesTimeline({
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         message: timelineEntry.message,
+        durationStart:
+          durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt,
         showCompletionDivider:
           timelineEntry.message.role === "assistant" &&
           completionDividerBeforeEntryId === timelineEntry.id,
@@ -6012,12 +6128,14 @@ const MessagesTimeline = memo(function MessagesTimeline({
                       key={`work-row:${workEntry.id}`}
                       workEntry={workEntry}
                       workEntryIndex={workEntryIndex}
+                      timestampFormat={timestampFormat}
                     />
                   ) : (
                     <SimpleWorkEntryRow
                       key={`work-row:${workEntry.id}`}
                       workEntry={workEntry}
                       workEntryIndex={workEntryIndex}
+                      timestampFormat={timestampFormat}
                     />
                   );
                 })}
@@ -6093,7 +6211,7 @@ const MessagesTimeline = memo(function MessagesTimeline({
                     )}
                   </div>
                   <p className="text-right text-[10px] text-muted-foreground/30">
-                    {formatTimestamp(row.message.createdAt)}
+                    {formatTimestamp(row.message.createdAt, timestampFormat)}
                   </p>
                 </div>
               </div>
@@ -6182,8 +6300,9 @@ const MessagesTimeline = memo(function MessagesTimeline({
                   {formatMessageMeta(
                     row.message.createdAt,
                     row.message.streaming
-                      ? formatElapsed(row.message.createdAt, nowIso)
-                      : formatElapsed(row.message.createdAt, row.message.completedAt),
+                      ? formatElapsed(row.durationStart, nowIso)
+                      : formatElapsed(row.durationStart, row.message.completedAt),
+                    timestampFormat,
                   )}
                 </p>
               </div>

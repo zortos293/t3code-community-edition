@@ -401,7 +401,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "tool-complete",
         createdAt: "2026-02-23T00:00:02.000Z",
-        summary: "Command run complete",
+        summary: "Ran command",
         tone: "tool",
         kind: "tool.completed",
       }),
@@ -438,7 +438,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "command-tool",
         kind: "tool.completed",
-        summary: "Command run complete",
+        summary: "Ran command",
         payload: {
           itemType: "command_execution",
           data: {
@@ -454,7 +454,7 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBe("bun run lint");
   });
 
-  it("keeps tool lifecycle metadata for richer tool rendering", () => {
+  it("keeps rich tool metadata used for tool rendering", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({
         id: "tool-with-metadata",
@@ -479,12 +479,16 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     const [entry] = deriveWorkLogEntries(activities, undefined);
-    expect(entry?.toolTitle).toBe("bash");
-    expect(entry?.toolStatus).toBe("completed");
-    expect(entry?.command).toBe("bun run dev");
-    expect(entry?.output).toBe('{ "dev": "vite dev --port 3000" }');
-    expect(entry?.exitCode).toBe(0);
-    expect(entry?.detail).toBe('{ "dev": "vite dev --port 3000" }');
+    expect(entry).toMatchObject({
+      activityKind: "tool.completed",
+      command: "bun run dev",
+      detail: '{ "dev": "vite dev --port 3000" }',
+      exitCode: 0,
+      itemType: "command_execution",
+      output: '{ "dev": "vite dev --port 3000" }',
+      toolStatus: "completed",
+      toolTitle: "bash",
+    });
   });
 
   it("extracts changed file paths for file-change tool activities", () => {
@@ -492,7 +496,7 @@ describe("deriveWorkLogEntries", () => {
       makeActivity({
         id: "file-tool",
         kind: "tool.completed",
-        summary: "File change complete",
+        summary: "File change",
         payload: {
           itemType: "file_change",
           data: {

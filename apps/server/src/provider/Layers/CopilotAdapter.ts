@@ -44,6 +44,7 @@ import {
   recordTurnUsage,
   type CopilotTurnTrackingState,
 } from "./copilotTurnTracking.ts";
+import { loadCopilotMcpServers } from "./copilotMcpServers.ts";
 import { normalizeCopilotCliPathOverride, resolveBundledCopilotCliPath } from "./copilotCliPath.ts";
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import type {
@@ -1272,6 +1273,16 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           normalizeCopilotCliPathOverride(input.providerOptions?.copilot?.cliPath) ??
           resolveBundledCopilotCliPath();
         const configDir = trimToUndefined(input.providerOptions?.copilot?.configDir);
+        const mcpServers = yield* Effect.tryPromise({
+          try: () => loadCopilotMcpServers(configDir),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: toMessage(cause, "Failed to load GitHub Copilot MCP configuration."),
+              cause,
+            }),
+        });
         const resumeSessionId = extractResumeSessionId(input.resumeCursor);
         const clientOptions: CopilotClientOptions = {
           ...(cliPath ? { cliPath } : {}),
@@ -1307,6 +1318,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                 ...(reasoningEffort ? { reasoningEffort } : {}),
                 ...(input.cwd ? { workingDirectory: input.cwd } : {}),
                 ...(configDir ? { configDir } : {}),
+                ...(mcpServers ? { mcpServers } : {}),
                 streaming: true,
               });
             }
@@ -1316,6 +1328,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               ...(reasoningEffort ? { reasoningEffort } : {}),
               ...(input.cwd ? { workingDirectory: input.cwd } : {}),
               ...(configDir ? { configDir } : {}),
+              ...(mcpServers ? { mcpServers } : {}),
               streaming: true,
             });
           },

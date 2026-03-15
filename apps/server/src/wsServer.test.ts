@@ -8,6 +8,7 @@ import { Effect, Exit, Layer, PlatformError, PubSub, Scope, Stream } from "effec
 import { describe, expect, it, afterEach, vi } from "vitest";
 import { createServer } from "./wsServer";
 import { SkillsManagerLive } from "./skills/SkillsManager";
+import { McpManagerLive } from "./mcp/McpManager";
 import WebSocket from "ws";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
@@ -534,6 +535,7 @@ describe("WebSocket Server", () => {
       Layer.provideMerge(runtimeLayer),
       Layer.provideMerge(providerHealthLayer),
       Layer.provideMerge(SkillsManagerLive),
+      Layer.provideMerge(McpManagerLive),
       Layer.provideMerge(openLayer),
       Layer.provideMerge(serverConfigLayer),
       Layer.provideMerge(AnalyticsService.layerTest),
@@ -633,6 +635,25 @@ describe("WebSocket Server", () => {
     expect(response.headers.get("content-type")).toContain("image/png");
     const bytes = Buffer.from(await response.arrayBuffer());
     expect(bytes).toEqual(Buffer.from("hello-encoded-attachment"));
+  });
+
+  it("serves persisted attachments by attachment id lookup", async () => {
+    const stateDir = makeTempDir("t3code-state-attachments-id-");
+    const attachmentId = "thread-a-00000000-0000-4000-8000-000000000001";
+    const attachmentPath = path.join(stateDir, "attachments", `${attachmentId}.png`);
+    fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
+    fs.writeFileSync(attachmentPath, Buffer.from("hello-id-attachment"));
+
+    server = await createTestServer({ cwd: "/test/project", stateDir });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+    expect(port).toBeGreaterThan(0);
+
+    const response = await fetch(`http://127.0.0.1:${port}/attachments/${attachmentId}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("image/png");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    expect(bytes).toEqual(Buffer.from("hello-id-attachment"));
   });
 
   it("serves static index for root path", async () => {

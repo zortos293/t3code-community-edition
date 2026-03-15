@@ -1329,7 +1329,7 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
 
     expect(activity?.kind).toBe("tool.completed");
-    expect(activity?.summary).toBe("bash complete");
+    expect(activity?.summary).toBe("bash");
     expect(payload?.itemType).toBe("command_execution");
     expect(payload?.title).toBe("bash");
     expect(payload?.status).toBe("completed");
