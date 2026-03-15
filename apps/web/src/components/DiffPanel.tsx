@@ -20,11 +20,11 @@ import { readNativeApi } from "../nativeApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
+import { useAppSettings } from "../appSettings";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
-import { useAppSettings } from "../appSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
@@ -525,6 +525,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       ) : orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
+        </div>
+      ) : !settings.showFileChangeDiffs ? (
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+          File change diffs are hidden in settings.
         </div>
       ) : (
         <>

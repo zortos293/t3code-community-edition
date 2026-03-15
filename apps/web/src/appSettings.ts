@@ -34,6 +34,10 @@ const AppSettingsSchema = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
+  showCommandOutput: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  showFileChangeDiffs: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(() => Option.some(true)),
+  ),
   timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
   ),
