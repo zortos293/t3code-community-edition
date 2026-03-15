@@ -168,6 +168,29 @@ function denyCopilotPermissionRequest(_request: PermissionRequest): PermissionRe
   return { kind: "denied-by-rules" };
 }
 
+function withPromiseTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+  onTimeout: () => Error,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(onTimeout());
+    }, timeoutMs);
+
+    void operation().then(
+      (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
 function extractLastCopilotAssistantText(events: ReadonlyArray<SessionEvent>): string {
   let latestCompleted = "";
   const deltaByMessageId = new Map<string, string>();
@@ -473,29 +496,35 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         let session: Awaited<ReturnType<CopilotClient["createSession"]>> | undefined;
 
         try {
-          await client.start();
-          session = await client.createSession({
-            workingDirectory: cwd,
-            model: COPILOT_MODEL,
-            streaming: true,
-            availableTools: [],
-            onPermissionRequest: denyCopilotPermissionRequest,
-          });
+          return await withPromiseTimeout(
+            async () => {
+              await client.start();
+              session = await client.createSession({
+                workingDirectory: cwd,
+                model: COPILOT_MODEL,
+                streaming: true,
+                availableTools: [],
+                onPermissionRequest: denyCopilotPermissionRequest,
+              });
 
-          const response = await session.sendAndWait(
-            {
-              prompt,
-              mode: "immediate",
+              const response = await session.sendAndWait(
+                {
+                  prompt,
+                  mode: "immediate",
+                },
+                COPILOT_TIMEOUT_MS,
+              );
+              const history = await session.getMessages().catch(() => [] as SessionEvent[]);
+              const assistantText =
+                response?.data.content?.trim() || extractLastCopilotAssistantText(history);
+              if (assistantText.length === 0) {
+                throw new Error("GitHub Copilot did not return an assistant response.");
+              }
+              return assistantText;
             },
             COPILOT_TIMEOUT_MS,
+            () => new Error("GitHub Copilot request timed out."),
           );
-          const history = await session.getMessages().catch(() => [] as SessionEvent[]);
-          const assistantText =
-            response?.data.content?.trim() || extractLastCopilotAssistantText(history);
-          if (assistantText.length === 0) {
-            throw new Error("GitHub Copilot did not return an assistant response.");
-          }
-          return assistantText;
         } finally {
           await session?.destroy().catch(() => undefined);
           await client.stop().catch(() => []);
@@ -659,6 +688,13 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       const outputSchemaJson = Schema.Struct({
         branch: Schema.String,
       });
+
+      if (input.provider === "copilot" && imagePaths.length > 0) {
+        return yield* new TextGenerationError({
+          operation: "generateBranchName",
+          detail: "Copilot branch generation does not support image attachments yet.",
+        });
+      }
 
       const generated =
         input.provider === "copilot"
