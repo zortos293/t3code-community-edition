@@ -1,4 +1,5 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
+import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model" | "slash-skill";
 export type ComposerSlashCommand = "model" | "plan" | "default" | "skills";
@@ -10,7 +11,15 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
+type ComposerInlineSegment =
+  | { type: "text"; text: string }
+  | { type: "mention"; path: string }
+  | { type: "skill"; name: string }
+  | { type: "terminal-context" };
+
 const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "skills"];
+
+const isInlineTokenSegment = (segment: ComposerInlineSegment): boolean => segment.type !== "text";
 
 function clampCursor(text: string, cursor: number): number {
   if (!Number.isFinite(cursor)) return text.length;
@@ -18,7 +27,13 @@ function clampCursor(text: string, cursor: number): number {
 }
 
 function isWhitespace(char: string): boolean {
-  return char === " " || char === "\n" || char === "\t" || char === "\r";
+  return (
+    char === " " ||
+    char === "\n" ||
+    char === "\t" ||
+    char === "\r" ||
+    char === INLINE_TERMINAL_CONTEXT_PLACEHOLDER
+  );
 }
 
 function tokenStartForCursor(text: string, cursor: number): number {
@@ -49,7 +64,6 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
       expandedCursor += expandedLength;
       continue;
     }
-
     if (segment.type === "skill") {
       const expandedLength = segment.name.length + 1;
       if (remaining <= 1) {
@@ -57,6 +71,14 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
       }
       remaining -= 1;
       expandedCursor += expandedLength;
+      continue;
+    }
+    if (segment.type === "terminal-context") {
+      if (remaining <= 1) {
+        return expandedCursor + remaining;
+      }
+      remaining -= 1;
+      expandedCursor += 1;
       continue;
     }
 
@@ -71,14 +93,12 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
   return expandedCursor;
 }
 
-function collapsedSegmentLength(
-  segment: { type: "text"; text: string } | { type: "mention" } | { type: "skill" },
-): number {
+function collapsedSegmentLength(segment: ComposerInlineSegment): number {
   return segment.type === "text" ? segment.text.length : 1;
 }
 
 function clampCollapsedComposerCursorForSegments(
-  segments: ReadonlyArray<{ type: "text"; text: string } | { type: "mention" } | { type: "skill" }>,
+  segments: ReadonlyArray<ComposerInlineSegment>,
   cursorInput: number,
 ): number {
   const collapsedLength = segments.reduce(
@@ -109,9 +129,8 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
   let collapsedCursor = 0;
 
   for (const segment of segments) {
-    if (segment.type === "mention" || segment.type === "skill") {
-      const expandedLength =
-        (segment.type === "mention" ? segment.path.length : segment.name.length) + 1;
+    if (segment.type === "mention") {
+      const expandedLength = segment.path.length + 1;
       if (remaining === 0) {
         return collapsedCursor;
       }
@@ -119,6 +138,26 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
         return collapsedCursor + 1;
       }
       remaining -= expandedLength;
+      collapsedCursor += 1;
+      continue;
+    }
+    if (segment.type === "skill") {
+      const expandedLength = segment.name.length + 1;
+      if (remaining === 0) {
+        return collapsedCursor;
+      }
+      if (remaining <= expandedLength) {
+        return collapsedCursor + 1;
+      }
+      remaining -= expandedLength;
+      collapsedCursor += 1;
+      continue;
+    }
+    if (segment.type === "terminal-context") {
+      if (remaining <= 1) {
+        return collapsedCursor + remaining;
+      }
+      remaining -= 1;
       collapsedCursor += 1;
       continue;
     }
@@ -134,29 +173,24 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
   return collapsedCursor;
 }
 
-export function isCollapsedCursorAdjacentToMention(
+export function isCollapsedCursorAdjacentToInlineToken(
   text: string,
   cursorInput: number,
   direction: "left" | "right",
 ): boolean {
   const segments = splitPromptIntoComposerSegments(text);
-  if (!segments.some((segment) => segment.type === "mention" || segment.type === "skill")) {
+  if (!segments.some(isInlineTokenSegment)) {
     return false;
   }
 
-  const collapsedLength = segments.reduce(
-    (total, segment) => total + collapsedSegmentLength(segment),
-    0,
+  const cursor = clampCollapsedComposerCursorForSegments(
+    segments as ReadonlyArray<ComposerInlineSegment>,
+    cursorInput,
   );
-  if (Number.isFinite(cursorInput) && cursorInput > collapsedLength) {
-    return false;
-  }
-
-  const cursor = clampCollapsedComposerCursorForSegments(segments, cursorInput);
   let collapsedOffset = 0;
 
-  for (const segment of segments) {
-    if (segment.type === "mention" || segment.type === "skill") {
+  for (const segment of segments as ReadonlyArray<ComposerInlineSegment>) {
+    if (isInlineTokenSegment(segment)) {
       if (direction === "left" && cursor === collapsedOffset + 1) {
         return true;
       }
@@ -169,6 +203,8 @@ export function isCollapsedCursorAdjacentToMention(
 
   return false;
 }
+
+export const isCollapsedCursorAdjacentToMention = isCollapsedCursorAdjacentToInlineToken;
 
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
@@ -238,7 +274,6 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
     };
   }
 
-  // `/` mid-text (not at line start) triggers skill picker
   if (token.startsWith("/") && tokenStart > lineStart) {
     return {
       kind: "slash-skill",
