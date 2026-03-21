@@ -653,7 +653,8 @@ describe("WebSocket Server", () => {
   it("serves persisted attachments by attachment id lookup", async () => {
     const baseDir = makeTempDir("t3code-state-attachments-id-");
     const attachmentId = "thread-a-00000000-0000-4000-8000-000000000001";
-    const attachmentPath = path.join(baseDir, "attachments", `${attachmentId}.png`);
+    const { attachmentsDir } = deriveServerPathsSync(baseDir, undefined);
+    const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
     fs.mkdirSync(path.dirname(attachmentPath), { recursive: true });
     fs.writeFileSync(attachmentPath, Buffer.from("hello-id-attachment"));
 

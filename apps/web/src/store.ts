@@ -210,16 +210,16 @@ function inferProviderForThreadModel(input: {
   ) {
     return input.sessionProviderName;
   }
+  const normalizedCopilot = normalizeModelSlug(input.model, "copilot");
+  if (normalizedCopilot && COPILOT_MODEL_SLUGS.has(normalizedCopilot)) {
+    return "copilot";
+  }
   const normalizedClaude = normalizeModelSlug(input.model, "claudeAgent");
   if (
     normalizedClaude &&
     getModelOptions("claudeAgent").some((option) => option.slug === normalizedClaude)
   ) {
     return "claudeAgent";
-  }
-  const normalizedCopilot = normalizeModelSlug(input.model, "copilot");
-  if (normalizedCopilot && COPILOT_MODEL_SLUGS.has(normalizedCopilot)) {
-    return "copilot";
   }
   const normalizedCodex = normalizeModelSlug(input.model, "codex");
   if (normalizedCodex && CODEX_MODEL_SLUGS.has(normalizedCodex)) {

@@ -498,6 +498,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const command = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const title = extractToolTitle(payload);
+  const toolStatus = extractToolStatus(payload);
+  const { output, exitCode } = extractToolOutputEnvelope(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -512,6 +514,15 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     if (detail) {
       entry.detail = detail;
     }
+  }
+  if (output) {
+    entry.output = output;
+  }
+  if (typeof exitCode === "number") {
+    entry.exitCode = exitCode;
+  }
+  if (toolStatus) {
+    entry.toolStatus = toolStatus;
   }
   if (command) {
     entry.command = command;
