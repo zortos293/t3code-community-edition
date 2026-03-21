@@ -10,6 +10,7 @@ import {
   type ProjectEntry,
   type ProjectScript,
   type ModelSlug,
+  type ClaudeCodeEffort,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ResolvedKeybindingsConfig,
@@ -1388,6 +1389,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
               copilotProviderModels.map((model) => ({ slug: model.id, name: model.name })),
             )
           : getModelOptions("copilot"),
+      claudeAgent: getModelOptions("claudeAgent"),
     }),
     [copilotProviderModels],
   );
@@ -1395,6 +1397,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => ({
       codex: getDefaultModel("codex"),
       copilot: builtInModelOptionsByProvider.copilot[0]?.slug ?? getDefaultModel("copilot"),
+      claudeAgent: getDefaultModel("claudeAgent"),
     }),
     [builtInModelOptionsByProvider],
   );
@@ -1402,16 +1405,37 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider === "copilot"
       ? resolveAppModelSelection(
           "copilot",
-          settings.customCopilotModels,
+          {
+            codex: settings.customCodexModels,
+            copilot: settings.customCopilotModels,
+            claudeAgent: settings.customClaudeModels,
+          },
           activeThread?.model ?? activeProject?.model ?? defaultModelByProvider.copilot,
           builtInModelOptionsByProvider.copilot,
         )
-      : resolveModelSlugForProvider(
-          selectedProvider,
-          activeThread?.model ?? activeProject?.model ?? defaultModelByProvider[selectedProvider],
-        );
-  const customModelsForSelectedProvider =
-    selectedProvider === "copilot" ? settings.customCopilotModels : settings.customCodexModels;
+      : selectedProvider === "claudeAgent"
+        ? resolveAppModelSelection(
+            "claudeAgent",
+            {
+              codex: settings.customCodexModels,
+              copilot: settings.customCopilotModels,
+              claudeAgent: settings.customClaudeModels,
+            },
+            activeThread?.model ?? activeProject?.model ?? defaultModelByProvider.claudeAgent,
+            builtInModelOptionsByProvider.claudeAgent,
+          )
+        : resolveModelSlugForProvider(
+            selectedProvider,
+            activeThread?.model ?? activeProject?.model ?? defaultModelByProvider[selectedProvider],
+          );
+  const customModelsByProvider = useMemo(
+    () => ({
+      codex: settings.customCodexModels,
+      copilot: settings.customCopilotModels,
+      claudeAgent: settings.customClaudeModels,
+    }),
+    [settings.customClaudeModels, settings.customCodexModels, settings.customCopilotModels],
+  );
   const selectedModel = useMemo(() => {
     const draftModel = composerDraft.model;
     if (!draftModel) {
@@ -1419,7 +1443,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     return resolveAppModelSelection(
       selectedProvider,
-      customModelsForSelectedProvider,
+      customModelsByProvider,
       draftModel,
       builtInModelOptionsByProvider[selectedProvider],
     ) as ModelSlug;
@@ -1427,7 +1451,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     baseThreadModel,
     builtInModelOptionsByProvider,
     composerDraft.model,
-    customModelsForSelectedProvider,
+    customModelsByProvider,
     selectedProvider,
   ]);
   const selectedCopilotModelMetadata =
@@ -1443,22 +1467,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedProvider === "codex"
       ? getDefaultReasoningEffort("codex")
       : (selectedCopilotModelMetadata?.defaultReasoningEffort ?? null);
-  const selectedEffort =
-    composerDraft.effort && reasoningOptions.includes(composerDraft.effort)
-      ? composerDraft.effort
-      : defaultReasoningEffort;
+  const selectedEffort: CodexReasoningEffort | null =
+    composerDraft.effort && reasoningOptions.includes(composerDraft.effort as CodexReasoningEffort)
+      ? (composerDraft.effort as CodexReasoningEffort)
+      : (defaultReasoningEffort as CodexReasoningEffort | null);
   const selectedCodexFastModeEnabled =
-    selectedProvider === "codex" ? composerDraft.codexFastMode : false;
+    selectedProvider === "codex" ? composerDraft.codexFastMode === true : false;
   const selectedModelOptionsForDispatch = useMemo(() => {
     if (selectedProvider === "codex") {
       const codexOptions = {
-        ...(supportsReasoningEffort && selectedEffort ? { reasoningEffort: selectedEffort } : {}),
+        ...(supportsReasoningEffort && selectedEffort
+          ? { reasoningEffort: selectedEffort as CodexReasoningEffort }
+          : {}),
         ...(selectedCodexFastModeEnabled ? { fastMode: true } : {}),
       };
       return Object.keys(codexOptions).length > 0 ? { codex: codexOptions } : undefined;
     }
     if (selectedProvider === "copilot" && supportsReasoningEffort && selectedEffort) {
-      return { copilot: { reasoningEffort: selectedEffort } };
+      return { copilot: { reasoningEffort: selectedEffort as CodexReasoningEffort } };
+    }
+    if (selectedProvider === "claudeAgent" && supportsReasoningEffort && selectedEffort) {
+      return { claudeAgent: { effort: selectedEffort as ClaudeCodeEffort } };
     }
     return undefined;
   }, [selectedCodexFastModeEnabled, selectedEffort, selectedProvider, supportsReasoningEffort]);
@@ -1479,6 +1508,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       getCustomModelOptionsByProvider({
         customCodexModels: settings.customCodexModels,
         customCopilotModels: settings.customCopilotModels,
+        customClaudeModels: settings.customClaudeModels,
         builtInCopilotOptions: builtInModelOptionsByProvider.copilot,
       }),
     [builtInModelOptionsByProvider.copilot, settings],
@@ -3974,7 +4004,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         activeThread.id,
         resolveAppModelSelection(
           provider,
-          provider === "copilot" ? settings.customCopilotModels : settings.customCodexModels,
+          {
+            codex: settings.customCodexModels,
+            copilot: settings.customCopilotModels,
+            claudeAgent: settings.customClaudeModels,
+          },
           model,
           builtInModelOptionsByProvider[provider],
         ),
@@ -3988,6 +4022,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       scheduleComposerFocus,
       setComposerDraftModel,
       setComposerDraftProvider,
+      settings.customClaudeModels,
       settings.customCopilotModels,
       settings.customCodexModels,
     ],
@@ -6486,7 +6521,7 @@ function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): o
   label: string;
   available: true;
 } {
-  return option.available && option.value !== "claudeCode";
+  return option.available;
 }
 
 const AVAILABLE_PROVIDER_OPTIONS = PROVIDER_OPTIONS.filter(isAvailableProviderOption);
@@ -6499,7 +6534,7 @@ const COMING_SOON_PROVIDER_OPTIONS = [
 const PROVIDER_ICON_BY_PROVIDER: Record<ProviderPickerKind, Icon> = {
   codex: OpenAI,
   copilot: GitHubIcon,
-  claudeCode: ClaudeAI,
+  claudeAgent: ClaudeAI,
   cursor: CursorIcon,
 };
 
@@ -6789,7 +6824,9 @@ const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 aria-hidden="true"
                 className={cn(
                   "size-4 shrink-0 opacity-80",
-                  option.value === "claudeCode" ? "" : "text-muted-foreground/85",
+                  option.value === "claudeAgent"
+                    ? "text-muted-foreground/85"
+                    : "text-muted-foreground/85",
                 )}
               />
               <span>{option.label}</span>

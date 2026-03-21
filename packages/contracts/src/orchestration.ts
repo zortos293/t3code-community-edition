@@ -27,7 +27,7 @@ export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
 
-export const ProviderKind = Schema.Union([Schema.Literal("codex"), Schema.Literal("copilot")]);
+export const ProviderKind = Schema.Literals(["codex", "copilot", "claudeAgent"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -53,9 +53,22 @@ export const CopilotProviderStartOptions = Schema.Struct({
   configDir: Schema.optional(TrimmedNonEmptyString),
 });
 export type CopilotProviderStartOptions = typeof CopilotProviderStartOptions.Type;
+export const ClaudeProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  permissionMode: Schema.optional(TrimmedNonEmptyString),
+  maxThinkingTokens: Schema.optional(NonNegativeInt),
+});
+export type ClaudeProviderStartOptions = typeof ClaudeProviderStartOptions.Type;
+
 export const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
-  copilot: Schema.optional(CopilotProviderStartOptions),
+  copilot: Schema.optional(
+    Schema.Struct({
+      cliPath: Schema.optional(TrimmedNonEmptyString),
+      configDir: Schema.optional(TrimmedNonEmptyString),
+    }),
+  ),
+  claudeAgent: Schema.optional(ClaudeProviderStartOptions),
 });
 export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 export const RuntimeMode = Schema.Literals(["approval-required", "full-access"]);
@@ -171,10 +184,17 @@ export const OrchestrationProposedPlan = Schema.Struct({
   id: OrchestrationProposedPlanId,
   turnId: Schema.NullOr(TurnId),
   planMarkdown: TrimmedNonEmptyString,
+  implementedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(() => null)),
+  implementationThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(() => null)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
+
+const SourceProposedPlanReference = Schema.Struct({
+  threadId: ThreadId,
+  planId: OrchestrationProposedPlanId,
+});
 
 export const OrchestrationSessionStatus = Schema.Literals([
   "idle",
@@ -255,6 +275,7 @@ export const OrchestrationLatestTurn = Schema.Struct({
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
   assistantMessageId: Schema.NullOr(MessageId),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
@@ -382,6 +403,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
 });
 
@@ -402,6 +424,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
 });
 
@@ -684,6 +707,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
   ),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
 });
 

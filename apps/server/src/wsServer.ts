@@ -376,7 +376,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           };
 
           const attachmentPath = resolveAttachmentPath({
-            stateDir: serverConfig.stateDir,
+            attachmentsDir: serverConfig.attachmentsDir,
             attachment: persistedAttachment,
           });
           if (!attachmentPath) {
@@ -446,11 +446,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".");
           const filePath = isIdLookup
             ? resolveAttachmentPathById({
-                stateDir: serverConfig.stateDir,
+                attachmentsDir: serverConfig.attachmentsDir,
                 attachmentId: normalizedRelativePath,
               })
             : resolveAttachmentRelativePath({
-                stateDir: serverConfig.stateDir,
+                attachmentsDir: serverConfig.attachmentsDir,
                 relativePath: normalizedRelativePath,
               });
           if (!filePath) {

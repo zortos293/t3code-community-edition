@@ -368,6 +368,8 @@ function createSnapshotWithLongProposedPlan(): OrchestrationReadModel {
                 id: "plan-browser-test",
                 turnId: null,
                 planMarkdown,
+                implementedAt: null,
+                implementationThreadId: null,
                 createdAt: isoAt(1_000),
                 updatedAt: isoAt(1_001),
               },
@@ -750,6 +752,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       draftsByThreadId: {},
       draftThreadsByThreadId: {},
       projectDraftThreadIdByProjectId: {},
+      stickyModel: null,
+      stickyModelOptions: {},
     });
     useStore.setState({
       projects: [],
@@ -1272,6 +1276,198 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(page.getByText("Send a message to start the conversation."))
         .toBeInTheDocument();
       await expect.element(page.getByTestId("composer-editor")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("snapshots sticky codex settings into a new draft thread", async () => {
+    useComposerDraftStore.setState({
+      stickyModel: "gpt-5.3-codex",
+      stickyModelOptions: {
+        codex: {
+          reasoningEffort: "medium",
+          fastMode: true,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sticky-codex-traits-test" as MessageId,
+        targetText: "sticky codex traits test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
+        model: "gpt-5.3-codex",
+        provider: "codex",
+        modelOptions: {
+          codex: {
+            fastMode: true,
+          },
+        },
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("hydrates the provider alongside a sticky claude model", async () => {
+    useComposerDraftStore.setState({
+      stickyModel: "claude-opus-4-6",
+      stickyModelOptions: {
+        claudeAgent: {
+          effort: "max",
+          fastMode: true,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sticky-claude-model-test" as MessageId,
+        targetText: "sticky claude model test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new sticky claude draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+        modelOptions: {
+          claudeAgent: {
+            effort: "max",
+            fastMode: true,
+          },
+        },
+      });
+      await expect.element(page.getByText("Claude Opus 4.6")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to defaults when no sticky composer settings exist", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-default-codex-traits-test" as MessageId,
+        targetText: "default codex traits test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toBeUndefined();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("prefers draft state over sticky composer settings and defaults", async () => {
+    useComposerDraftStore.setState({
+      stickyModel: "gpt-5.3-codex",
+      stickyModelOptions: {
+        codex: {
+          reasoningEffort: "medium",
+          fastMode: true,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-draft-codex-traits-precedence-test" as MessageId,
+        targetText: "draft codex traits precedence test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+
+      await newThreadButton.click();
+
+      const threadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a sticky draft thread UUID.",
+      );
+      const threadId = threadPath.slice(1) as ThreadId;
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+        model: "gpt-5.3-codex",
+        modelOptions: {
+          codex: {
+            fastMode: true,
+          },
+        },
+      });
+
+      useComposerDraftStore.getState().setModel(threadId, "gpt-5.4");
+      useComposerDraftStore.getState().setModelOptions(threadId, {
+        codex: {
+          reasoningEffort: "low",
+          fastMode: true,
+        },
+      });
+
+      await newThreadButton.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === threadPath,
+        "New-thread should reuse the existing project draft thread.",
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toMatchObject({
+        model: "gpt-5.4",
+        modelOptions: {
+          codex: {
+            reasoningEffort: "low",
+            fastMode: true,
+          },
+        },
+      });
     } finally {
       await mounted.cleanup();
     }

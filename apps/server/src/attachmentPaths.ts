@@ -25,11 +25,20 @@ export function normalizeAttachmentRelativePath(rawRelativePath: string): string
   return normalizeAttachmentRelativePathFrom(rawRelativePath, path);
 }
 
+type ResolveAttachmentRelativePathInput =
+  | {
+      readonly stateDir: string;
+      readonly relativePath: string;
+      readonly attachmentsDir?: never;
+    }
+  | {
+      readonly attachmentsDir: string;
+      readonly relativePath: string;
+      readonly stateDir?: never;
+    };
+
 export function resolveAttachmentRelativePathFrom(
-  input: {
-    readonly stateDir: string;
-    readonly relativePath: string;
-  },
+  input: ResolveAttachmentRelativePathInput,
   pathApi: AttachmentPathApi,
 ): string | null {
   const normalizedRelativePath = normalizeAttachmentRelativePathFrom(input.relativePath, pathApi);
@@ -37,7 +46,10 @@ export function resolveAttachmentRelativePathFrom(
     return null;
   }
 
-  const attachmentsRoot = pathApi.resolve(pathApi.join(input.stateDir, "attachments"));
+  const attachmentsRoot =
+    "attachmentsDir" in input
+      ? pathApi.resolve(input.attachmentsDir)
+      : pathApi.resolve(pathApi.join(input.stateDir, "attachments"));
   const filePath = pathApi.resolve(pathApi.join(attachmentsRoot, normalizedRelativePath));
   const relativeToRoot = pathApi.relative(attachmentsRoot, filePath);
   if (
@@ -50,9 +62,8 @@ export function resolveAttachmentRelativePathFrom(
   return filePath;
 }
 
-export function resolveAttachmentRelativePath(input: {
-  readonly stateDir: string;
-  readonly relativePath: string;
-}): string | null {
+export function resolveAttachmentRelativePath(
+  input: ResolveAttachmentRelativePathInput,
+): string | null {
   return resolveAttachmentRelativePathFrom(input, path);
 }

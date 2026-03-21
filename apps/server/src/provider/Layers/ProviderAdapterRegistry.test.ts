@@ -1,15 +1,15 @@
 import type { ProviderKind } from "@t3tools/contracts";
-import { it, assert, vi } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
-
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Layer, Stream } from "effect";
 
-import { CodexAdapter, CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { ProviderUnsupportedError } from "../Errors.ts";
+import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import { CodexAdapter, type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { CopilotAdapter, type CopilotAdapterShape } from "../Services/CopilotAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
-import { ProviderUnsupportedError } from "../Errors.ts";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const fakeCodexAdapter: CodexAdapterShape = {
   provider: "codex",
@@ -45,6 +45,23 @@ const fakeCopilotAdapter: CopilotAdapterShape = {
   streamEvents: Stream.empty,
 };
 
+const fakeClaudeAdapter: ClaudeAdapterShape = {
+  provider: "claudeAgent",
+  capabilities: { sessionModelSwitch: "in-session" },
+  startSession: vi.fn(),
+  sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  respondToRequest: vi.fn(),
+  respondToUserInput: vi.fn(),
+  stopSession: vi.fn(),
+  listSessions: vi.fn(),
+  hasSession: vi.fn(),
+  readThread: vi.fn(),
+  rollbackThread: vi.fn(),
+  stopAll: vi.fn(),
+  streamEvents: Stream.empty,
+};
+
 const layer = it.layer(
   Layer.mergeAll(
     Layer.provide(
@@ -52,6 +69,7 @@ const layer = it.layer(
       Layer.mergeAll(
         Layer.succeed(CodexAdapter, fakeCodexAdapter),
         Layer.succeed(CopilotAdapter, fakeCopilotAdapter),
+        Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
       ),
     ),
     NodeServices.layer,
@@ -59,14 +77,15 @@ const layer = it.layer(
 );
 
 layer("ProviderAdapterRegistryLive", (it) => {
-  it.effect("resolves a registered provider adapter", () =>
+  it.effect("resolves registered provider adapters", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
-      const codex = yield* registry.getByProvider("codex");
-      assert.equal(codex, fakeCodexAdapter);
+      assert.equal(yield* registry.getByProvider("codex"), fakeCodexAdapter);
+      assert.equal(yield* registry.getByProvider("copilot"), fakeCopilotAdapter);
+      assert.equal(yield* registry.getByProvider("claudeAgent"), fakeClaudeAdapter);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex", "copilot"]);
+      assert.deepEqual(providers, ["codex", "copilot", "claudeAgent"]);
     }),
   );
 

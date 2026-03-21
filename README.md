@@ -2,7 +2,7 @@
 
 This repo is a T3 Code fork that stays up to date with upstream and adds GitHub Copilot support.
 
-T3 Code is a minimal web GUI for coding agents. This fork supports both Codex and GitHub Copilot.
+T3 Code is a minimal web GUI for coding agents. This fork supports Codex, GitHub Copilot, and Claude Code.
 
 ## Preview
 
@@ -14,11 +14,12 @@ T3 Code is a minimal web GUI for coding agents. This fork supports both Codex an
 - tracks upstream `pingdotgg/t3code`
 - adds GitHub Copilot provider support
 - keeps Codex support working too
+- keeps the upstream Claude Code work in the merge
 
 ## How to use
 
 > [!WARNING]
-> You need to have either [Codex CLI](https://github.com/openai/codex) or GitHub Copilot available and authorized for T3 Code to work.
+> You need to have Codex CLI, GitHub Copilot, or Claude Code available and authorized for T3 Code to work.
 > When you run T3 Code from source, `bun install` is enough for Copilot support because `apps/server` already depends on `@github/copilot` and `@github/copilot-sdk`.
 > If you want to use GitHub Copilot CLI directly in a terminal, follow GitHub's [Copilot CLI installation guide](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli). If Copilot comes from an organization or enterprise, the Copilot CLI policy must be enabled there.
 

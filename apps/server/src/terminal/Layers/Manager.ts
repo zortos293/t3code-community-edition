@@ -13,7 +13,7 @@ import {
   type TerminalEvent,
   type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
-import { Effect, Encoding, Layer, Path, Schema } from "effect";
+import { Effect, Encoding, Layer, Schema } from "effect";
 
 import { createLogger } from "../../logger";
 import { PtyAdapter, PtyAdapterShape, type PtyExitEvent, type PtyProcess } from "../Services/PTY";
@@ -1172,13 +1172,11 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
 export const TerminalManagerLive = Layer.effect(
   TerminalManager,
   Effect.gen(function* () {
-    const { stateDir } = yield* ServerConfig;
-    const { join } = yield* Path.Path;
-    const logsDir = join(stateDir, "logs", "terminals");
+    const { terminalLogsDir } = yield* ServerConfig;
 
     const ptyAdapter = yield* PtyAdapter;
     const runtime = yield* Effect.acquireRelease(
-      Effect.sync(() => new TerminalManagerRuntime({ logsDir, ptyAdapter })),
+      Effect.sync(() => new TerminalManagerRuntime({ logsDir: terminalLogsDir, ptyAdapter })),
       (r) => Effect.sync(() => r.dispose()),
     );
 

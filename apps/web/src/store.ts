@@ -189,7 +189,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (providerName === "codex" || providerName === "copilot") {
+  if (providerName === "codex" || providerName === "copilot" || providerName === "claudeAgent") {
     return providerName;
   }
   return "codex";
@@ -199,13 +199,23 @@ const CODEX_MODEL_SLUGS = new Set<string>(getModelOptions("codex").map((option) 
 const COPILOT_MODEL_SLUGS = new Set<string>(
   getModelOptions("copilot").map((option) => option.slug),
 );
-
 function inferProviderForThreadModel(input: {
   readonly model: string;
   readonly sessionProviderName: string | null;
 }): ProviderKind {
-  if (input.sessionProviderName === "codex" || input.sessionProviderName === "copilot") {
+  if (
+    input.sessionProviderName === "codex" ||
+    input.sessionProviderName === "copilot" ||
+    input.sessionProviderName === "claudeAgent"
+  ) {
     return input.sessionProviderName;
+  }
+  const normalizedClaude = normalizeModelSlug(input.model, "claudeAgent");
+  if (
+    normalizedClaude &&
+    getModelOptions("claudeAgent").some((option) => option.slug === normalizedClaude)
+  ) {
+    return "claudeAgent";
   }
   const normalizedCopilot = normalizeModelSlug(input.model, "copilot");
   if (normalizedCopilot && COPILOT_MODEL_SLUGS.has(normalizedCopilot)) {
@@ -311,6 +321,8 @@ export function syncServerReadModel(state: AppState, readModel: OrchestrationRea
           id: proposedPlan.id,
           turnId: proposedPlan.turnId,
           planMarkdown: proposedPlan.planMarkdown,
+          implementedAt: proposedPlan.implementedAt,
+          implementationThreadId: proposedPlan.implementationThreadId,
           createdAt: proposedPlan.createdAt,
           updatedAt: proposedPlan.updatedAt,
         })),

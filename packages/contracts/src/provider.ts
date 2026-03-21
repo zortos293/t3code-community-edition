@@ -13,18 +13,17 @@ import {
   ChatAttachment,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
-  ProviderStartOptions,
   ProviderApprovalDecision,
   ProviderApprovalPolicy,
   ProviderInteractionMode,
   ProviderKind,
   ProviderRequestKind,
   ProviderSandboxMode,
+  ProviderStartOptions,
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration";
 
-const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const ProviderSessionStatus = Schema.Literals([
   "connecting",
   "ready",
@@ -37,21 +36,21 @@ export const ProviderSession = Schema.Struct({
   provider: ProviderKind,
   status: ProviderSessionStatus,
   runtimeMode: RuntimeMode,
-  cwd: Schema.optional(TrimmedNonEmptyStringSchema),
-  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  cwd: Schema.optional(TrimmedNonEmptyString),
+  model: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
   resumeCursor: Schema.optional(Schema.Unknown),
   activeTurnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
-  lastError: Schema.optional(TrimmedNonEmptyStringSchema),
+  lastError: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderSession = typeof ProviderSession.Type;
 export const ProviderSessionStartInput = Schema.Struct({
   threadId: ThreadId,
   provider: Schema.optional(ProviderKind),
-  cwd: Schema.optional(TrimmedNonEmptyStringSchema),
-  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  cwd: Schema.optional(TrimmedNonEmptyString),
+  model: Schema.optional(TrimmedNonEmptyString),
   modelOptions: Schema.optional(ProviderModelOptions),
   resumeCursor: Schema.optional(Schema.Unknown),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
@@ -64,12 +63,12 @@ export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 export const ProviderSendTurnInput = Schema.Struct({
   threadId: ThreadId,
   input: Schema.optional(
-    TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
+    TrimmedNonEmptyString.check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_INPUT_CHARS)),
   ),
   attachments: Schema.optional(
     Schema.Array(ChatAttachment).check(Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS)),
   ),
-  model: Schema.optional(TrimmedNonEmptyStringSchema),
+  model: Schema.optional(TrimmedNonEmptyString),
   modelOptions: Schema.optional(ProviderModelOptions),
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
@@ -115,8 +114,8 @@ export const ProviderEvent = Schema.Struct({
   provider: ProviderKind,
   threadId: ThreadId,
   createdAt: IsoDateTime,
-  method: TrimmedNonEmptyStringSchema,
-  message: Schema.optional(TrimmedNonEmptyStringSchema),
+  method: TrimmedNonEmptyString,
+  message: Schema.optional(TrimmedNonEmptyString),
   turnId: Schema.optional(TurnId),
   itemId: Schema.optional(ProviderItemId),
   requestId: Schema.optional(ApprovalRequestId),

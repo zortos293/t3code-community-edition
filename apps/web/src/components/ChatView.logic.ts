@@ -131,6 +131,7 @@ export function cloneComposerImageForRetry(
 export function getCustomModelOptionsByProvider(settings: {
   customCodexModels: readonly string[];
   customCopilotModels?: readonly string[];
+  customClaudeModels?: readonly string[];
   builtInCopilotOptions?: ReadonlyArray<BuiltInAppModelOption>;
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
@@ -141,6 +142,7 @@ export function getCustomModelOptionsByProvider(settings: {
       undefined,
       settings.builtInCopilotOptions,
     ),
+    claudeAgent: getAppModelOptions("claudeAgent", settings.customClaudeModels ?? []),
   };
 }
 
@@ -184,7 +186,6 @@ export function deriveVisibleThreadWorkLogEntries(
 ): WorkLogEntry[] {
   return deriveWorkLogEntries(activities, undefined);
 }
-
 export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;

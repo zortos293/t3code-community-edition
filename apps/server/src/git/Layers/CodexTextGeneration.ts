@@ -163,7 +163,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         }
 
         const resolvedPath = resolveAttachmentPath({
-          stateDir: serverConfig.stateDir,
+          attachmentsDir: serverConfig.attachmentsDir,
           attachment,
         });
         if (!resolvedPath || !path.isAbsolute(resolvedPath)) {
