@@ -21,6 +21,11 @@ import {
 import { ClaudeAI, CursorIcon, Gemini, GitHubIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import { getProviderSnapshot } from "../../providerModels";
+import {
+  deriveCopilotQuotaSummary,
+  findServerProviderModel,
+  formatCopilotBillingMultiplier,
+} from "./copilotQuota";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -43,6 +48,11 @@ const COMING_SOON_PROVIDER_OPTIONS = [
   { id: "opencode", label: "OpenCode", icon: OpenCodeIcon },
   { id: "gemini", label: "Gemini", icon: Gemini },
 ] as const;
+
+function formatQuotaResetDate(value: string | null): string | null {
+  if (!value) return null;
+  return new Date(value).toLocaleDateString();
+}
 
 function providerIconClassName(
   provider: ProviderKind | ProviderPickerKind,
@@ -72,6 +82,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModelLabel =
     selectedProviderOptions.find((option) => option.slug === props.model)?.name ?? props.model;
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
+  const copilotProvider = props.providers
+    ? (getProviderSnapshot(props.providers, "copilot") ?? null)
+    : null;
+  const selectedCopilotModel =
+    activeProvider === "copilot" && copilotProvider
+      ? findServerProviderModel(copilotProvider.models, props.model)
+      : null;
+  const copilotQuotaSummary = deriveCopilotQuotaSummary(copilotProvider?.quotaSnapshots);
+  const triggerSecondaryLabel =
+    activeProvider === "copilot"
+      ? selectedCopilotModel?.billingMultiplier != null
+        ? `${selectedModelLabel} — ${formatCopilotBillingMultiplier(selectedCopilotModel.billingMultiplier)}`
+        : selectedModelLabel
+      : selectedModelLabel;
   const handleModelChange = (provider: ProviderKind, value: string) => {
     if (props.disabled) return;
     if (!value) return;
@@ -125,11 +149,85 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               props.activeProviderIconClassName,
             )}
           />
-          <span className="min-w-0 flex-1 truncate">{selectedModelLabel}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {props.compact || activeProvider !== "copilot"
+              ? selectedModelLabel
+              : triggerSecondaryLabel}
+          </span>
+          {activeProvider === "copilot" && copilotQuotaSummary && !props.compact ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground/70">
+              {copilotQuotaSummary.remainingRequests === null
+                ? "Unlimited"
+                : `${copilotQuotaSummary.remainingRequests} left`}
+            </span>
+          ) : null}
           <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
         </span>
       </MenuTrigger>
       <MenuPopup align="start">
+        {activeProvider === "copilot" && copilotQuotaSummary ? (
+          <>
+            <div className="px-2.5 py-2">
+              <div className="flex min-w-[16rem] flex-col gap-2 rounded-lg border border-border/70 bg-muted/20 p-2.5">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                      Copilot premium usage
+                    </div>
+                    <div className="mt-0.5 text-sm font-medium text-foreground">
+                      {copilotQuotaSummary.remainingRequests === null
+                        ? "Unlimited remaining"
+                        : `${copilotQuotaSummary.remainingRequests} left`}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      {copilotQuotaSummary.entitlementRequests > 0 ? (
+                        <span>
+                          {copilotQuotaSummary.usedRequests} /{" "}
+                          {copilotQuotaSummary.entitlementRequests} used
+                        </span>
+                      ) : null}
+                      {selectedCopilotModel?.billingMultiplier != null ? (
+                        <span>
+                          {selectedModelLabel} —{" "}
+                          {formatCopilotBillingMultiplier(selectedCopilotModel.billingMultiplier)}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="text-right text-[11px] text-muted-foreground">
+                    <div>{copilotQuotaSummary.label}</div>
+                    {copilotQuotaSummary.remainingPercentage !== null ? (
+                      <div>{Math.round(copilotQuotaSummary.remainingPercentage)}% remaining</div>
+                    ) : null}
+                  </div>
+                </div>
+                {copilotQuotaSummary.remainingPercentage !== null ? (
+                  <div className="h-2 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-foreground/75 transition-[width] duration-500 ease-out motion-reduce:transition-none"
+                      style={{
+                        width: `${Math.max(0, Math.min(100, copilotQuotaSummary.remainingPercentage))}%`,
+                      }}
+                    />
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                  {formatQuotaResetDate(copilotQuotaSummary.resetDate) ? (
+                    <span>Resets {formatQuotaResetDate(copilotQuotaSummary.resetDate)}</span>
+                  ) : null}
+                  {copilotQuotaSummary.overage > 0 ? (
+                    <span>{copilotQuotaSummary.overage} overage requests</span>
+                  ) : null}
+                  {copilotQuotaSummary.overageAllowedWithExhaustedQuota ||
+                  copilotQuotaSummary.usageAllowedWithExhaustedQuota ? (
+                    <span>Pay-per-request available after quota exhaustion</span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            <MenuDivider />
+          </>
+        ) : null}
         {props.lockedProvider !== null ? (
           <MenuGroup>
             <MenuRadioGroup
