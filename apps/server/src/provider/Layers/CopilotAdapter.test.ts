@@ -4,13 +4,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { ThreadId } from "@t3tools/contracts";
-import { type SessionEvent } from "@github/copilot-sdk";
+import { type ModelInfo, type SessionEvent } from "@github/copilot-sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, it, vi } from "@effect/vitest";
 
 import { Effect, Fiber, Layer, Stream } from "effect";
 
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
@@ -92,7 +93,7 @@ class FakeCopilotSession {
 
 class FakeCopilotClient {
   public readonly startImpl = vi.fn(async () => undefined);
-  public readonly listModelsImpl = vi.fn(async () => []);
+  public readonly listModelsImpl = vi.fn<() => Promise<ModelInfo[]>>(async () => []);
   public readonly createSessionImpl = vi.fn(async (_config: unknown) => this.session);
   public readonly resumeSessionImpl = vi.fn(
     async (_sessionId: string, _config: unknown) => this.session,
@@ -129,6 +130,7 @@ const modeLayer = it.layer(
     clientFactory: () => modeClient,
   }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -176,6 +178,7 @@ const planLayer = it.layer(
     clientFactory: () => planClient,
   }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -240,68 +243,85 @@ planLayer("CopilotAdapterLive proposed plan events", (it) => {
 
 const mcpSession = new FakeCopilotSession("copilot-session-mcp");
 const mcpClient = new FakeCopilotClient(mcpSession);
-const mcpLayer = it.layer(
-  makeCopilotAdapterLive({
-    clientFactory: () => mcpClient,
-  }).pipe(
-    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-    Layer.provideMerge(NodeServices.layer),
-  ),
-);
+it.effect("CopilotAdapterLive MCP config loading", () =>
+  Effect.suspend(() =>
+    Effect.sync(() => mkdtempSync(path.join(os.tmpdir(), "t3-copilot-mcp-"))).pipe(
+      Effect.flatMap((configDir) => {
+        const layer = makeCopilotAdapterLive({
+          clientFactory: () => mcpClient,
+        }).pipe(
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+          Layer.provideMerge(
+            ServerSettingsService.layerTest({
+              providers: {
+                copilot: {
+                  homePath: configDir,
+                },
+              },
+            }),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        );
 
-mcpLayer("CopilotAdapterLive MCP config loading", (it) => {
-  it.effect("passes local MCP servers from mcp-config.json to the SDK", () =>
-    Effect.gen(function* () {
-      const configDir = mkdtempSync(path.join(os.tmpdir(), "t3-copilot-mcp-"));
-      try {
-        writeFileSync(
-          path.join(configDir, "mcp-config.json"),
-          JSON.stringify({
-            mcpServers: {
+        return Effect.gen(function* () {
+          try {
+            writeFileSync(
+              path.join(configDir, "mcp-config.json"),
+              JSON.stringify({
+                mcpServers: {
+                  "local-badge-repro": {
+                    command: "node",
+                    args: ["/tmp/t3code-local-mcp-reproduction/dist/index.js"],
+                  },
+                },
+              }),
+              "utf8",
+            );
+            mcpClient.createSessionImpl.mockClear();
+            mcpClient.listModelsImpl.mockImplementation(async () => [
+              {
+                id: "gpt-5",
+                name: "GPT-5",
+                capabilities: {} as ModelInfo["capabilities"],
+                supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+              },
+            ]);
+
+            const adapter = yield* CopilotAdapter;
+            yield* adapter.startSession({
+              provider: "copilot",
+              threadId: asThreadId("thread-mcp"),
+              runtimeMode: "full-access",
+              modelSelection: {
+                provider: "copilot",
+                model: "gpt-5",
+              },
+            });
+
+            const config = mcpClient.createSessionImpl.mock.calls[0]?.[0] as
+              | {
+                  configDir?: string;
+                  mcpServers?: Record<string, unknown>;
+                }
+              | undefined;
+
+            assert.equal(config?.configDir, configDir);
+            assert.deepStrictEqual(config?.mcpServers, {
               "local-badge-repro": {
+                type: "local",
                 command: "node",
                 args: ["/tmp/t3code-local-mcp-reproduction/dist/index.js"],
+                tools: ["*"],
               },
-            },
-          }),
-          "utf8",
-        );
-        mcpClient.createSessionImpl.mockClear();
-
-        const adapter = yield* CopilotAdapter;
-        yield* adapter.startSession({
-          provider: "copilot",
-          threadId: asThreadId("thread-mcp"),
-          runtimeMode: "full-access",
-          providerOptions: {
-            copilot: {
-              configDir,
-            },
-          },
-        });
-
-        const config = mcpClient.createSessionImpl.mock.calls[0]?.[0] as
-          | {
-              configDir?: string;
-              mcpServers?: Record<string, unknown>;
-            }
-          | undefined;
-
-        assert.equal(config?.configDir, configDir);
-        assert.deepStrictEqual(config?.mcpServers, {
-          "local-badge-repro": {
-            type: "local",
-            command: "node",
-            args: ["/tmp/t3code-local-mcp-reproduction/dist/index.js"],
-            tools: ["*"],
-          },
-        });
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }),
-  );
-});
+            });
+          } finally {
+            rmSync(configDir, { recursive: true, force: true });
+          }
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
+  ),
+);
 
 afterAll(() => {
   void modeSession.destroy();

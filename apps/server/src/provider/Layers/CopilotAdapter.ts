@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   type CodexReasoningEffort,
+  type ModelSelection,
   EventId,
   type ProviderApprovalDecision,
   ProviderItemId,
@@ -27,6 +28,7 @@ import { Effect, Layer, Queue, Stream } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -87,6 +89,11 @@ interface PendingUserInputRequest {
   readonly request: CopilotUserInputRequest;
   readonly turnId: TurnId | undefined;
   readonly resolve: (result: CopilotUserInputResponse) => void;
+}
+
+interface CopilotSessionConfiguration {
+  readonly model: string | undefined;
+  readonly reasoningEffort: CodexReasoningEffort | undefined;
 }
 
 interface ActiveCopilotSession extends CopilotTurnTrackingState {
@@ -195,14 +202,58 @@ function trimToUndefined(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function toNonNegativeInt(value: number | undefined) {
+  return value === undefined || !Number.isFinite(value)
+    ? undefined
+    : Math.max(0, Math.floor(value));
+}
+
+function toPositiveInt(value: number | undefined) {
+  const normalized = toNonNegativeInt(value);
+  return normalized && normalized > 0 ? normalized : undefined;
+}
+
+function mapSessionUsageInfo(usage: Extract<SessionEvent, { type: "session.usage_info" }>["data"]) {
+  return {
+    usedTokens: toNonNegativeInt(usage.currentTokens) ?? 0,
+    ...(toNonNegativeInt(usage.currentTokens) !== undefined
+      ? { totalProcessedTokens: toNonNegativeInt(usage.currentTokens) }
+      : {}),
+    ...(toPositiveInt(usage.tokenLimit) ? { maxTokens: toPositiveInt(usage.tokenLimit) } : {}),
+  };
+}
+
+function mapAssistantUsage(usage: Extract<SessionEvent, { type: "assistant.usage" }>["data"]) {
+  const inputTokens = toNonNegativeInt(usage.inputTokens);
+  const outputTokens = toNonNegativeInt(usage.outputTokens);
+  const cachedInputTokens = toNonNegativeInt(usage.cacheReadTokens);
+  const durationMs = toNonNegativeInt(usage.duration);
+  const usedTokens = (inputTokens ?? 0) + (outputTokens ?? 0) + (cachedInputTokens ?? 0);
+  return {
+    usedTokens,
+    totalProcessedTokens: usedTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(usedTokens > 0 ? { lastUsedTokens: usedTokens } : {}),
+    ...(inputTokens !== undefined ? { lastInputTokens: inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { lastOutputTokens: outputTokens } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+}
+
 function mapSupportedModelsById(models: ReadonlyArray<ModelInfo>) {
   return new Map(models.map((model) => [model.id, model]));
 }
 
-function getCopilotReasoningEffort(modelOptions: unknown) {
-  const record = asRecord(modelOptions);
-  const copilot = asRecord(record?.copilot);
-  const reasoningEffort = normalizeString(copilot?.reasoningEffort);
+function getCopilotReasoningEffortFromSelection(
+  modelSelection: ModelSelection | undefined,
+): CodexReasoningEffort | undefined {
+  if (!modelSelection || modelSelection.provider !== PROVIDER) {
+    return undefined;
+  }
+  const reasoningEffort = normalizeString(modelSelection.options?.reasoningEffort);
   return reasoningEffort === "low" ||
     reasoningEffort === "medium" ||
     reasoningEffort === "high" ||
@@ -449,18 +500,21 @@ function createSessionRecord(input: {
 const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig;
+    const serverSettings = yield* ServerSettingsService;
     const nativeEventLogger = options?.nativeEventLogger;
     const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, ActiveCopilotSession>();
+    const services = yield* Effect.services();
+    const runPromise = Effect.runPromiseWith(services);
 
     const emitRuntimeEvents = (events: ReadonlyArray<ProviderRuntimeEvent>) =>
-      Effect.runPromise(Queue.offerAll(runtimeEventQueue, events).pipe(Effect.asVoid)).catch(
+      runPromise(Queue.offerAll(runtimeEventQueue, events).pipe(Effect.asVoid)).catch(
         () => undefined,
       );
 
     const writeNativeEvent = (threadId: ThreadId, event: SessionEvent) => {
       if (!nativeEventLogger) return Promise.resolve();
-      return Effect.runPromise(nativeEventLogger.write(event, threadId)).catch(() => undefined);
+      return runPromise(nativeEventLogger.write(event, threadId)).catch(() => undefined);
     };
 
     const currentSyntheticTurnId = (record: ActiveCopilotSession) =>
@@ -719,7 +773,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               ...base(),
               type: "thread.token-usage.updated",
               payload: {
-                usage: event.data,
+                usage: mapSessionUsageInfo(event.data),
               },
             },
           ];
@@ -813,7 +867,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
               ...completionBase,
               type: "thread.token-usage.updated",
               payload: {
-                usage: event.data,
+                usage: mapAssistantUsage(event.data),
               },
             },
           ];
@@ -1187,7 +1241,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
         void emitRuntimeEvents(runtimeEvents);
       }
       if (event.type === "session.plan_changed" && event.data.operation !== "delete") {
-        void Effect.runPromise(emitLatestProposedPlan(record)).catch((cause) => {
+        void runPromise(emitLatestProposedPlan(record)).catch((cause) => {
           void emitRuntimeEvents([
             makeSyntheticEvent(
               record.threadId,
@@ -1245,6 +1299,24 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
 
     const startSession: CopilotAdapterShape["startSession"] = (input) =>
       Effect.gen(function* () {
+        const copilotSettings = yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.providers.copilot),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+                detail: toMessage(cause, "Failed to load GitHub Copilot settings."),
+                cause,
+              }),
+          ),
+        );
+        const requestedModelSelection =
+          input.modelSelection?.provider === PROVIDER ? input.modelSelection : undefined;
+        const sessionConfiguration: CopilotSessionConfiguration = {
+          model: requestedModelSelection?.model,
+          reasoningEffort: getCopilotReasoningEffortFromSelection(requestedModelSelection),
+        };
         if (input.provider !== undefined && input.provider !== PROVIDER) {
           return yield* new ProviderAdapterValidationError({
             provider: PROVIDER,
@@ -1270,9 +1342,9 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
         }
 
         const cliPath =
-          normalizeCopilotCliPathOverride(input.providerOptions?.copilot?.cliPath) ??
+          normalizeCopilotCliPathOverride(copilotSettings.binaryPath) ??
           resolveBundledCopilotCliPath();
-        const configDir = trimToUndefined(input.providerOptions?.copilot?.configDir);
+        const configDir = trimToUndefined(copilotSettings.homePath);
         const mcpServers = yield* Effect.tryPromise({
           try: () => loadCopilotMcpServers(configDir),
           catch: (cause) =>
@@ -1292,7 +1364,6 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
         const client = options?.clientFactory?.(clientOptions) ?? new CopilotClient(clientOptions);
         const pendingApprovalResolvers = new Map<string, PendingApprovalRequest>();
         const pendingUserInputResolvers = new Map<string, PendingUserInputRequest>();
-        const reasoningEffort = getCopilotReasoningEffort(input.modelOptions);
         let sessionRecord: ActiveCopilotSession | undefined;
         const handlers = createInteractionHandlers(
           input.threadId,
@@ -1305,8 +1376,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
         yield* validateSessionConfiguration({
           client,
           threadId: input.threadId,
-          model: input.model,
-          reasoningEffort,
+          ...sessionConfiguration,
         });
 
         const session = yield* Effect.tryPromise({
@@ -1314,8 +1384,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             if (resumeSessionId) {
               return client.resumeSession(resumeSessionId, {
                 ...handlers,
-                ...(input.model ? { model: input.model } : {}),
-                ...(reasoningEffort ? { reasoningEffort } : {}),
+                ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
+                ...(sessionConfiguration.reasoningEffort
+                  ? { reasoningEffort: sessionConfiguration.reasoningEffort }
+                  : {}),
                 ...(input.cwd ? { workingDirectory: input.cwd } : {}),
                 ...(configDir ? { configDir } : {}),
                 ...(mcpServers ? { mcpServers } : {}),
@@ -1324,8 +1396,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
             }
             return client.createSession({
               ...handlers,
-              ...(input.model ? { model: input.model } : {}),
-              ...(reasoningEffort ? { reasoningEffort } : {}),
+              ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
+              ...(sessionConfiguration.reasoningEffort
+                ? { reasoningEffort: sessionConfiguration.reasoningEffort }
+                : {}),
               ...(input.cwd ? { workingDirectory: input.cwd } : {}),
               ...(configDir ? { configDir } : {}),
               ...(mcpServers ? { mcpServers } : {}),
@@ -1350,8 +1424,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           pendingUserInputResolvers,
           cwd: input.cwd,
           configDir,
-          model: input.model,
-          reasoningEffort,
+          ...sessionConfiguration,
         });
         const unsubscribe = session.on((event) => {
           handleSessionEvent(record, event);
@@ -1370,8 +1443,10 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           makeSyntheticEvent(input.threadId, "session.configured", {
             config: {
               ...(input.cwd ? { cwd: input.cwd } : {}),
-              ...(input.model ? { model: input.model } : {}),
-              ...(reasoningEffort ? { reasoningEffort } : {}),
+              ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
+              ...(sessionConfiguration.reasoningEffort
+                ? { reasoningEffort: sessionConfiguration.reasoningEffort }
+                : {}),
               ...(configDir ? { configDir } : {}),
               streaming: true,
             },
@@ -1390,7 +1465,7 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           status: "ready",
           runtimeMode: input.runtimeMode,
           ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(input.model ? { model: input.model } : {}),
+          ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
           threadId: input.threadId,
           resumeCursor: session.sessionId,
           createdAt: record.createdAt,
@@ -1401,12 +1476,16 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
     const sendTurn: CopilotAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const record = yield* getSessionRecord(input.threadId);
-        const explicitReasoningEffort = getCopilotReasoningEffort(input.modelOptions);
-        const nextModel = input.model ?? record.model;
+        const requestedModelSelection =
+          input.modelSelection?.provider === PROVIDER ? input.modelSelection : undefined;
+        const explicitReasoningEffort =
+          getCopilotReasoningEffortFromSelection(requestedModelSelection);
+        const nextModel = requestedModelSelection?.model ?? record.model;
         const nextReasoningEffort =
           explicitReasoningEffort !== undefined
             ? explicitReasoningEffort
-            : input.model && input.model !== record.model
+            : requestedModelSelection?.model !== undefined &&
+                requestedModelSelection.model !== record.model
               ? undefined
               : record.reasoningEffort;
         const attachments = (input.attachments ?? []).map((attachment) => {
@@ -1582,22 +1661,30 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
 
     const listSessions: CopilotAdapterShape["listSessions"] = () =>
       Effect.sync(() =>
-        Array.from(sessions.values()).map(
-          (record) =>
-            ({
-              provider: PROVIDER,
-              status: record.currentTurnId ? "running" : "ready",
-              runtimeMode: record.runtimeMode,
-              threadId: record.threadId,
-              resumeCursor: record.session.sessionId,
-              createdAt: record.createdAt,
-              updatedAt: record.updatedAt,
-              ...(record.cwd ? { cwd: record.cwd } : {}),
-              ...(record.model ? { model: record.model } : {}),
-              ...(record.currentTurnId ? { activeTurnId: record.currentTurnId } : {}),
-              ...(record.lastError ? { lastError: record.lastError } : {}),
-            }) satisfies ProviderSession,
-        ),
+        Array.from(sessions.values()).map((record) => {
+          const session: ProviderSession = {
+            provider: PROVIDER,
+            status: record.currentTurnId ? "running" : "ready",
+            runtimeMode: record.runtimeMode,
+            threadId: record.threadId,
+            resumeCursor: record.session.sessionId,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          };
+          if (record.cwd) {
+            Object.assign(session, { cwd: record.cwd });
+          }
+          if (record.model) {
+            Object.assign(session, { model: record.model });
+          }
+          if (record.currentTurnId) {
+            Object.assign(session, { activeTurnId: record.currentTurnId });
+          }
+          if (record.lastError) {
+            Object.assign(session, { lastError: record.lastError });
+          }
+          return session;
+        }),
       );
 
     const hasSession: CopilotAdapterShape["hasSession"] = (threadId) =>
