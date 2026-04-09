@@ -142,7 +142,10 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
-import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  withContextWindowModelLimit,
+} from "../lib/contextWindow";
 import {
   resolveComposerFooterContentWidth,
   shouldForceCompactComposerFooterForFit,
@@ -155,6 +158,11 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { ContextWindowMeter } from "./chat/ContextWindowMeter";
+import {
+  deriveCopilotQuotaSummary,
+  findServerProviderModel,
+  formatCopilotBillingMultiplier,
+} from "./chat/copilotQuota";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { ComposerCommandItem, ComposerCommandMenu } from "./chat/ComposerCommandMenu";
@@ -864,10 +872,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return threadIds;
     }, [activeLatestTurn?.sourceProposedPlan?.threadId, activeThread?.id]),
   );
-  const activeContextWindow = useMemo(
-    () => deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
-    [activeThread?.activities],
-  );
   useEffect(() => {
     setMountedTerminalThreadIds((currentThreadIds) => {
       const nextThreadIds = reconcileMountedTerminalThreadIds({
@@ -1009,6 +1013,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     settings,
   });
   const selectedProviderModels = getProviderModels(providerStatuses, selectedProvider);
+  const selectedProviderModel = useMemo(
+    () => findServerProviderModel(selectedProviderModels, selectedModel),
+    [selectedModel, selectedProviderModels],
+  );
+  const activeContextWindow = useMemo(
+    () =>
+      withContextWindowModelLimit(
+        deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
+        selectedProviderModel?.maxContextWindowTokens,
+      ),
+    [activeThread?.activities, selectedProviderModel?.maxContextWindowTokens],
+  );
   const composerProviderState = useMemo(
     () =>
       getComposerProviderState({
@@ -1431,6 +1447,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
       ),
     [lockedProvider, modelOptionsByProvider],
   );
+  const activeProviderStatus = useMemo(
+    () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
+    [selectedProvider, providerStatuses],
+  );
+  const copilotQuotaSummary = useMemo(
+    () => deriveCopilotQuotaSummary(activeProviderStatus?.quotaSnapshots),
+    [activeProviderStatus?.quotaSnapshots],
+  );
+  const selectedCopilotModel = useMemo(
+    () => (selectedProvider === "copilot" ? selectedProviderModel : null),
+    [selectedProvider, selectedProviderModel],
+  );
   const workspaceEntriesQuery = useQuery(
     projectSearchEntriesQueryOptions({
       cwd: gitCwd,
@@ -1517,10 +1545,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const nonPersistedComposerImageIdSet = useMemo(
     () => new Set(nonPersistedComposerImageIds),
     [nonPersistedComposerImageIds],
-  );
-  const activeProviderStatus = useMemo(
-    () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
-    [selectedProvider, providerStatuses],
   );
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
@@ -3960,6 +3984,66 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
       {/* Error banner */}
       <ProviderStatusBanner status={activeProviderStatus} />
+      {selectedProvider === "copilot" && copilotQuotaSummary ? (
+        <div className="border-b border-border/60 px-3 py-2 sm:px-5">
+          <div className="flex flex-col gap-2 rounded-xl border border-border/70 bg-muted/20 px-3 py-2.5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                  Copilot premium usage
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-foreground">
+                  <span className="font-medium">
+                    {copilotQuotaSummary.remainingRequests === null
+                      ? "Unlimited remaining"
+                      : `${copilotQuotaSummary.remainingRequests} left`}
+                  </span>
+                  {copilotQuotaSummary.entitlementRequests > 0 ? (
+                    <span className="text-muted-foreground">
+                      {copilotQuotaSummary.usedRequests} / {copilotQuotaSummary.entitlementRequests}{" "}
+                      used
+                    </span>
+                  ) : null}
+                  {selectedCopilotModel?.billingMultiplier != null ? (
+                    <span className="text-muted-foreground">
+                      {selectedCopilotModel.name} —{" "}
+                      {formatCopilotBillingMultiplier(selectedCopilotModel.billingMultiplier)}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                <div>{copilotQuotaSummary.label}</div>
+                {copilotQuotaSummary.remainingPercentage !== null ? (
+                  <div>{Math.round(copilotQuotaSummary.remainingPercentage)}% remaining</div>
+                ) : null}
+              </div>
+            </div>
+            {copilotQuotaSummary.remainingPercentage !== null ? (
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-foreground/75 transition-[width] duration-500 ease-out motion-reduce:transition-none"
+                  style={{
+                    width: `${Math.max(0, Math.min(100, copilotQuotaSummary.remainingPercentage))}%`,
+                  }}
+                />
+              </div>
+            ) : null}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              {copilotQuotaSummary.resetDate ? (
+                <span>Resets {new Date(copilotQuotaSummary.resetDate).toLocaleDateString()}</span>
+              ) : null}
+              {copilotQuotaSummary.overage > 0 ? (
+                <span>{copilotQuotaSummary.overage} overage requests</span>
+              ) : null}
+              {copilotQuotaSummary.overageAllowedWithExhaustedQuota ||
+              copilotQuotaSummary.usageAllowedWithExhaustedQuota ? (
+                <span>Pay-per-request available after quota exhaustion</span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
       <ThreadErrorBanner
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
@@ -3988,8 +4072,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
               <MessagesTimeline
                 key={activeThread.id}
                 hasMessages={timelineEntries.length > 0}
-                isWorking={isWorking}
-                activeTurnInProgress={isWorking || !latestTurnSettled}
+                isWorking={!latestTurnSettled || isWorking}
+                activeTurnInProgress={!latestTurnSettled || isWorking}
                 activeTurnStartedAt={activeWorkStartedAt}
                 scrollContainer={messagesScrollElement}
                 timelineEntries={timelineEntries}

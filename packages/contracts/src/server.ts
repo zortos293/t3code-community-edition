@@ -48,11 +48,26 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
+export const ServerProviderQuotaSnapshot = Schema.Struct({
+  key: TrimmedNonEmptyString,
+  entitlementRequests: NonNegativeInt,
+  usedRequests: NonNegativeInt,
+  remainingPercentage: Schema.Number,
+  overage: NonNegativeInt,
+  overageAllowedWithExhaustedQuota: Schema.Boolean,
+  usageAllowedWithExhaustedQuota: Schema.optional(Schema.Boolean),
+  isUnlimitedEntitlement: Schema.optional(Schema.Boolean),
+  resetDate: Schema.optional(IsoDateTime),
+});
+export type ServerProviderQuotaSnapshot = typeof ServerProviderQuotaSnapshot.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   isCustom: Schema.Boolean,
   capabilities: Schema.NullOr(ModelCapabilities),
+  billingMultiplier: Schema.optional(Schema.Number),
+  maxContextWindowTokens: Schema.optional(NonNegativeInt),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
@@ -66,6 +81,7 @@ export const ServerProvider = Schema.Struct({
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  quotaSnapshots: Schema.optional(Schema.Array(ServerProviderQuotaSnapshot)),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

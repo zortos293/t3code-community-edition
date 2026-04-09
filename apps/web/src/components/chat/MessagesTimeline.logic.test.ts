@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { computeMessageDurationStart, normalizeCompactToolLabel } from "./MessagesTimeline.logic";
+import {
+  computeMessageDurationStart,
+  deriveMessagesTimelineRows,
+  normalizeCompactToolLabel,
+} from "./MessagesTimeline.logic";
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -141,5 +145,35 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("deriveMessagesTimelineRows", () => {
+  it("adds a working row while local dispatch is still in flight before the turn starts", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      completionDividerBeforeEntryId: null,
+      isWorking: true,
+      activeTurnStartedAt: "2026-03-29T00:00:11.000Z",
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "working",
+        id: "working-indicator-row",
+        createdAt: "2026-03-29T00:00:11.000Z",
+      },
+    ]);
+  });
+
+  it("omits the working row when no work is active", () => {
+    expect(
+      deriveMessagesTimelineRows({
+        timelineEntries: [],
+        completionDividerBeforeEntryId: null,
+        isWorking: false,
+        activeTurnStartedAt: null,
+      }),
+    ).toEqual([]);
   });
 });

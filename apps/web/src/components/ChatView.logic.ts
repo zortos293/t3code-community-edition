@@ -295,12 +295,21 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
 
-  return (
+  const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
-    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null) ||
-    input.localDispatch.sessionOrchestrationStatus !== (session?.orchestrationStatus ?? null) ||
-    input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
+    input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
+
+  if (latestTurnChanged) {
+    return true;
+  }
+
+  const nextOrchestrationStatus = session?.orchestrationStatus ?? null;
+  return (
+    input.localDispatch.sessionOrchestrationStatus !== nextOrchestrationStatus &&
+    nextOrchestrationStatus !== null &&
+    nextOrchestrationStatus !== "idle" &&
+    nextOrchestrationStatus !== "starting"
   );
 }

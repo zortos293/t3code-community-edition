@@ -6,6 +6,7 @@ import type {
   ModelCapabilities,
   ServerProviderAuth,
   ServerProviderModel,
+  ServerProviderQuotaSnapshot,
   ServerProviderState,
 } from "@t3tools/contracts";
 import { Effect, Equal, Exit, Layer, Stream } from "effect";
@@ -158,11 +159,59 @@ function modelFromInfo(model: ModelInfo): ServerProviderModel {
     slug: model.id,
     name: trimToUndefined(model.name) ?? model.id,
     isCustom: false,
+    ...(typeof model.billing?.multiplier === "number"
+      ? { billingMultiplier: model.billing.multiplier }
+      : {}),
+    ...(Number.isFinite(model.capabilities.limits.max_context_window_tokens)
+      ? { maxContextWindowTokens: model.capabilities.limits.max_context_window_tokens }
+      : {}),
     capabilities: {
       ...DEFAULT_COPILOT_MODEL_CAPABILITIES,
       reasoningEffortLevels: reasoningEffortLevelsFromModelInfo(model),
     },
   };
+}
+
+function quotaSnapshotsFromAccountQuota(
+  quotaSnapshots:
+    | Record<
+        string,
+        {
+          entitlementRequests: number;
+          usedRequests: number;
+          remainingPercentage: number;
+          overage: number;
+          overageAllowedWithExhaustedQuota: boolean;
+          resetDate?: string;
+        }
+      >
+    | undefined,
+): ReadonlyArray<ServerProviderQuotaSnapshot> {
+  if (!quotaSnapshots) return [];
+
+  return Object.entries(quotaSnapshots)
+    .flatMap(([key, snapshot]) => {
+      const entitlementRequests = Math.max(0, Math.round(snapshot.entitlementRequests));
+      const usedRequests = Math.max(0, Math.round(snapshot.usedRequests));
+      const overage = Math.max(0, Math.round(snapshot.overage));
+      const remainingPercentage = Number.isFinite(snapshot.remainingPercentage)
+        ? snapshot.remainingPercentage
+        : 0;
+
+      return [
+        {
+          key,
+          entitlementRequests,
+          usedRequests,
+          remainingPercentage,
+          overage,
+          overageAllowedWithExhaustedQuota: snapshot.overageAllowedWithExhaustedQuota,
+          usageAllowedWithExhaustedQuota: snapshot.overageAllowedWithExhaustedQuota,
+          ...(snapshot.resetDate ? { resetDate: snapshot.resetDate } : {}),
+        } satisfies ServerProviderQuotaSnapshot,
+      ];
+    })
+    .toSorted((left, right) => left.key.localeCompare(right.key));
 }
 
 function toAuthStatus(message: string): Pick<ServerProviderAuth, "status"> {
@@ -252,7 +301,11 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
     Effect.tryPromise({
       try: async () => {
         await client.start();
-        return await client.listModels();
+        const [models, quota] = await Promise.all([
+          client.listModels(),
+          client.rpc.account.getQuota().catch(() => null),
+        ]);
+        return { models, quotaSnapshots: quotaSnapshotsFromAccountQuota(quota?.quotaSnapshots) };
       },
       catch: (cause) =>
         new CopilotProbeError(toMessage(cause, "Failed to start GitHub Copilot."), cause),
@@ -264,7 +317,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
       provider: PROVIDER,
       enabled: settings.enabled,
       checkedAt,
-      models: resolveRuntimeModels(probe.value, settings),
+      models: resolveRuntimeModels(probe.value.models, settings),
       probe: {
         installed: true,
         version: null,
@@ -274,6 +327,7 @@ export const checkCopilotProviderStatus = Effect.fn("checkCopilotProviderStatus"
           type: "github",
           label: "GitHub Copilot",
         },
+        quotaSnapshots: probe.value.quotaSnapshots,
       },
     });
   }

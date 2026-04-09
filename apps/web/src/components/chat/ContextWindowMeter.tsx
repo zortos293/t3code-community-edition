@@ -1,5 +1,9 @@
 import { cn } from "~/lib/utils";
-import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
+import {
+  type ContextWindowSnapshot,
+  formatContextWindowTokens,
+  formatContextWindowUsageLabel,
+} from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
 function formatPercentage(value: number | null): string | null {
@@ -15,6 +19,7 @@ function formatPercentage(value: number | null): string | null {
 export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
   const { usage } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
+  const usageLabel = formatContextWindowUsageLabel(usage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
   const circumference = 2 * Math.PI * radius;
@@ -29,10 +34,10 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
         render={
           <button
             type="button"
-            className="group inline-flex items-center justify-center rounded-full transition-opacity hover:opacity-85"
+            className="group inline-flex items-center gap-2 rounded-full px-1 py-0.5 text-left transition-opacity hover:opacity-85"
             aria-label={
               usage.maxTokens !== null && usedPercentage
-                ? `Context window ${usedPercentage} used`
+                ? `Context window ${usageLabel} used (${usedPercentage})`
                 : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
             }
           >
@@ -74,6 +79,9 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
                   : formatContextWindowTokens(usage.usedTokens)}
               </span>
             </span>
+            <span className="hidden whitespace-nowrap text-[11px] font-medium text-muted-foreground sm:inline">
+              {usageLabel}
+            </span>
           </button>
         }
       />
@@ -84,11 +92,9 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
           </div>
           {usage.maxTokens !== null && usedPercentage ? (
             <div className="whitespace-nowrap text-xs font-medium text-foreground">
-              <span>{usedPercentage}</span>
+              <span>{usageLabel}</span>
               <span className="mx-1">⋅</span>
-              <span>{formatContextWindowTokens(usage.usedTokens)}</span>
-              <span>/</span>
-              <span>{formatContextWindowTokens(usage.maxTokens ?? null)} context used</span>
+              <span>{usedPercentage} used</span>
             </div>
           ) : (
             <div className="text-sm text-foreground">
@@ -100,6 +106,11 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
             <div className="text-xs text-muted-foreground">
               Total processed: {formatContextWindowTokens(usage.totalProcessedTokens ?? null)}{" "}
               tokens
+            </div>
+          ) : null}
+          {usage.remainingTokens !== null ? (
+            <div className="text-xs text-muted-foreground">
+              Remaining: {formatContextWindowTokens(usage.remainingTokens)} tokens
             </div>
           ) : null}
           {usage.compactsAutomatically ? (
