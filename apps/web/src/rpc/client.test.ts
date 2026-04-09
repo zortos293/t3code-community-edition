@@ -136,6 +136,9 @@ describe("WsRpcAtomClient", () => {
           ...DEFAULT_SERVER_SETTINGS.providers.codex,
           homePath: "/tmp/codex-home",
         },
+        copilot: {
+          ...DEFAULT_SERVER_SETTINGS.providers.copilot,
+        },
         claudeAgent: {
           ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
           enabled: false,
@@ -185,6 +188,9 @@ describe("WsRpcAtomClient", () => {
         codex: {
           ...DEFAULT_SERVER_SETTINGS.providers.codex,
           homePath: "/tmp/codex-home",
+        },
+        copilot: {
+          ...DEFAULT_SERVER_SETTINGS.providers.copilot,
         },
         claudeAgent: {
           ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
