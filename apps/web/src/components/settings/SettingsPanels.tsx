@@ -11,6 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
+  GIT_TEXT_GENERATION_PROVIDERS,
   PROVIDER_DISPLAY_NAMES,
   type DesktopUpdateChannel,
   type ScopedThreadRef,
@@ -579,7 +580,11 @@ export function GeneralSettingsPanel() {
     return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
   })();
 
-  const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
+  const textGenerationModelSelection = resolveAppModelSelectionState(
+    settings,
+    serverProviders,
+    GIT_TEXT_GENERATION_PROVIDERS,
+  );
   const textGenProvider = textGenerationModelSelection.provider;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
@@ -1054,6 +1059,7 @@ export function GeneralSettingsPanel() {
                 lockedProvider={null}
                 providers={serverProviders}
                 modelOptionsByProvider={gitModelOptionsByProvider}
+                allowedProviders={GIT_TEXT_GENERATION_PROVIDERS}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onProviderModelChange={(provider, model) => {
@@ -1064,6 +1070,7 @@ export function GeneralSettingsPanel() {
                         textGenerationModelSelection: createModelSelection({ provider, model }),
                       },
                       serverProviders,
+                      GIT_TEXT_GENERATION_PROVIDERS,
                     ),
                   });
                 }}
@@ -1093,6 +1100,7 @@ export function GeneralSettingsPanel() {
                         }),
                       },
                       serverProviders,
+                      GIT_TEXT_GENERATION_PROVIDERS,
                     ),
                   });
                 }}
