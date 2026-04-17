@@ -159,6 +159,20 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("keeps quoted --key value arguments starting with -- as values", () => {
+    expect(parseCliArgs('--launch-arg "--project Claude Code" --debug')).toEqual({
+      flags: { "launch-arg": "--project Claude Code", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted dangerous-skip flag strings as values", () => {
+    expect(parseCliArgs('--launch-arg "--dangerously-skip-permissions" --debug')).toEqual({
+      flags: { "launch-arg": "--dangerously-skip-permissions", debug: null },
+      positionals: [],
+    });
+  });
+
   it("preserves intentionally empty quoted values", () => {
     expect(parseCliArgs('--append-system-prompt "" --chrome')).toEqual({
       flags: { "append-system-prompt": "", chrome: null },

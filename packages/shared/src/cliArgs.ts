@@ -7,19 +7,26 @@ export interface ParseCliArgsOptions {
   readonly booleanFlags?: readonly string[];
 }
 
-function tokenizeCliArgs(input: string): string[] {
-  const tokens: string[] = [];
+interface ParsedCliToken {
+  readonly value: string;
+  readonly quoted: boolean;
+}
+
+function tokenizeCliArgs(input: string): ParsedCliToken[] {
+  const tokens: ParsedCliToken[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;
   let tokenStarted = false;
+  let tokenQuoted = false;
 
   const pushCurrent = () => {
     if (!tokenStarted) {
       return;
     }
-    tokens.push(current);
+    tokens.push({ value: current, quoted: tokenQuoted });
     current = "";
     tokenStarted = false;
+    tokenQuoted = false;
   };
 
   const trimmed = input.trim();
@@ -72,6 +79,7 @@ function tokenizeCliArgs(input: string): string[] {
 
     if (char === '"' || char === "'") {
       tokenStarted = true;
+      tokenQuoted = true;
       quote = char;
       continue;
     }
@@ -114,7 +122,10 @@ export function parseCliArgs(
   args: string | readonly string[],
   options?: ParseCliArgsOptions,
 ): ParsedCliArgs {
-  const tokens = typeof args === "string" ? tokenizeCliArgs(args) : Array.from(args);
+  const tokens =
+    typeof args === "string"
+      ? tokenizeCliArgs(args)
+      : Array.from(args, (value) => ({ value, quoted: false }));
   const booleanSet = options?.booleanFlags ? new Set(options.booleanFlags) : undefined;
 
   const flags: Record<string, string | null> = {};
@@ -122,9 +133,10 @@ export function parseCliArgs(
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
+    const tokenValue = token.value;
 
-    if (token.startsWith("--")) {
-      const rest = token.slice(2);
+    if (tokenValue.startsWith("--")) {
+      const rest = tokenValue.slice(2);
       if (!rest) continue;
 
       // Handle --key=value syntax
@@ -142,14 +154,14 @@ export function parseCliArgs(
 
       // Handle --key value or --flag (boolean)
       const next = tokens[i + 1];
-      if (next !== undefined && !next.startsWith("--")) {
-        flags[rest] = next;
+      if (next !== undefined && (!next.value.startsWith("--") || next.quoted)) {
+        flags[rest] = next.value;
         i++;
       } else {
         flags[rest] = null;
       }
     } else {
-      positionals.push(token);
+      positionals.push(tokenValue);
     }
   }
 

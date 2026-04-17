@@ -342,6 +342,100 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
   return rewriteMarkdownFileUriHref(href.trim()) ?? href.trim();
 }
 
+function remarkStandaloneFileUrls() {
+  return (tree: {
+    children?: Array<{
+      type?: string;
+      value?: string;
+      children?: Array<unknown>;
+    }>;
+  }) => {
+    const visitChildren = (
+      parent: {
+        children?: Array<{
+          type?: string;
+          value?: string;
+          children?: Array<unknown>;
+        }>;
+      } | null,
+    ) => {
+      if (!parent?.children) {
+        return;
+      }
+
+      for (let index = 0; index < parent.children.length; index += 1) {
+        const child = parent.children[index];
+        if (!child || typeof child !== "object") {
+          continue;
+        }
+
+        if (child.type === "text" && typeof child.value === "string") {
+          const matches = [...child.value.matchAll(STANDALONE_FILE_URL_PATTERN)];
+          if (matches.length === 0) {
+            continue;
+          }
+
+          const replacementNodes: Array<Record<string, unknown>> = [];
+          let lastIndex = 0;
+          for (const match of matches) {
+            const href = match[0];
+            const matchIndex = match.index ?? -1;
+            if (!href || matchIndex < lastIndex) {
+              continue;
+            }
+            if (matchIndex > lastIndex) {
+              replacementNodes.push({
+                type: "text",
+                value: child.value.slice(lastIndex, matchIndex),
+              });
+            }
+            replacementNodes.push({
+              type: "link",
+              url: href,
+              title: null,
+              children: [{ type: "text", value: href }],
+            });
+            lastIndex = matchIndex + href.length;
+          }
+
+          if (lastIndex < child.value.length) {
+            replacementNodes.push({
+              type: "text",
+              value: child.value.slice(lastIndex),
+            });
+          }
+
+          parent.children.splice(index, 1, ...replacementNodes);
+          index += replacementNodes.length - 1;
+          continue;
+        }
+
+        if (
+          child.type === "link" ||
+          child.type === "linkReference" ||
+          child.type === "definition" ||
+          child.type === "code" ||
+          child.type === "inlineCode"
+        ) {
+          continue;
+        }
+
+        visitChildren(
+          child as {
+            children?: Array<{
+              type?: string;
+              value?: string;
+              children?: Array<unknown>;
+            }>;
+          },
+        );
+      }
+    };
+
+    visitChildren(tree);
+  };
+}
+
 const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
@@ -579,7 +673,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   return (
     <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkStandaloneFileUrls]}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

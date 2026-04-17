@@ -13,4 +13,17 @@ describe("ChatMarkdown", () => {
     expect(html).toContain("index.ts");
     expect(html).toContain("L12");
   });
+
+  it("renders bare file URLs inside plain text as file links", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        text="Open file:///home/project/src/index.ts#L12 directly"
+        cwd="/home/project"
+      />,
+    );
+
+    expect(html).toContain("chat-markdown-file-link");
+    expect(html).toContain("index.ts");
+    expect(html).toContain("L12");
+  });
 });

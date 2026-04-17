@@ -138,4 +138,26 @@ describe("ChatMarkdown", () => {
       await screen.unmount();
     }
   });
+
+  it("renders bare file urls as clickable file links", async () => {
+    const filePath =
+      "/Users/yashsingh/p/sco/claude-code-extract/src/utils/permissions/PermissionRule.ts";
+    const screen = await render(
+      <ChatMarkdown text={`Open file://${filePath}#L8 directly`} cwd="/repo/project" />,
+    );
+
+    try {
+      const link = page.getByRole("link", { name: "PermissionRule.ts · L8" });
+      await expect.element(link).toBeInTheDocument();
+      await expect.element(link).toHaveAttribute("href", `${filePath}#L8`);
+
+      await link.click();
+
+      await vi.waitFor(() => {
+        expect(openInPreferredEditorMock).toHaveBeenCalledWith(expect.anything(), `${filePath}:8`);
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

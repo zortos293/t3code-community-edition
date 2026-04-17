@@ -22,6 +22,7 @@ import {
   markPromotedDraftThreadsByRef,
   useComposerDraftStore,
 } from "~/composerDraftStore";
+import { getUnifiedSettingsSnapshot } from "~/hooks/useSettings";
 import { ensureLocalApi } from "~/localApi";
 import { collectActiveTerminalThreadIds } from "~/lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
@@ -60,7 +61,7 @@ import { useTerminalStateStore } from "~/terminalStateStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
-import { derivePhysicalProjectKey } from "../../logicalProject";
+import { deriveLogicalProjectKeyFromSettings } from "../../logicalProject";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -465,14 +466,19 @@ function coalesceOrchestrationUiEvents(
   return coalesced;
 }
 
+export function buildProjectUiSyncInputs(
+  projects: ReturnType<typeof selectProjectsAcrossEnvironments>,
+) {
+  const projectGroupingSettings = getUnifiedSettingsSnapshot();
+  return projects.map((project) => ({
+    key: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+    cwd: project.cwd,
+  }));
+}
+
 function syncProjectUiFromStore() {
   const projects = selectProjectsAcrossEnvironments(useStore.getState());
-  useUiStateStore.getState().syncProjects(
-    projects.map((project) => ({
-      key: derivePhysicalProjectKey(project),
-      cwd: project.cwd,
-    })),
-  );
+  useUiStateStore.getState().syncProjects(buildProjectUiSyncInputs(projects));
 }
 
 function syncThreadUiFromStore() {
@@ -540,12 +546,7 @@ function applyRecoveredEventBatch(
   useStore.getState().applyOrchestrationEvents(uiEvents, environmentId);
   if (needsProjectUiSync) {
     const projects = selectProjectsAcrossEnvironments(useStore.getState());
-    useUiStateStore.getState().syncProjects(
-      projects.map((project) => ({
-        key: derivePhysicalProjectKey(project),
-        cwd: project.cwd,
-      })),
-    );
+    useUiStateStore.getState().syncProjects(buildProjectUiSyncInputs(projects));
   }
 
   const needsThreadUiSync = events.some(

@@ -39,6 +39,14 @@ function getClientSettingsSnapshot(): ClientSettings {
   return clientSettingsSnapshot;
 }
 
+export function getUnifiedSettingsSnapshot(): UnifiedSettings {
+  return {
+    ...DEFAULT_UNIFIED_SETTINGS,
+    ...getServerConfig()?.settings,
+    ...getClientSettingsSnapshot(),
+  };
+}
+
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
   emitClientSettingsChange();

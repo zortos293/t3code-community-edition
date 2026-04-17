@@ -2846,9 +2846,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const installedClaudeVersion = yield* resolveCliVersion(claudeBinaryPath);
-      const normalizedModel = normalizeClaudeSelectedModel({
+      const normalizedModel = yield* validateClaudeSelectedModel({
         model: modelSelection?.model,
         installedVersion: installedClaudeVersion,
+        operation: "startSession",
       });
       const resolvedModelSelection =
         modelSelection && normalizedModel.model
@@ -3038,9 +3039,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
-    const normalizedModel = normalizeClaudeSelectedModel({
+    const normalizedModel = yield* validateClaudeSelectedModel({
       model: modelSelection?.model,
       installedVersion: context.installedClaudeVersion,
+      operation: "sendTurn",
     });
     const resolvedModelSelection =
       modelSelection && normalizedModel.model
@@ -3270,6 +3272,33 @@ function normalizeClaudeSelectedModel(input: {
         ? "claude-opus-4-7"
         : undefined,
   };
+}
+
+function validateClaudeSelectedModel(input: {
+  readonly model: string | undefined;
+  readonly installedVersion: string | null | undefined;
+  readonly operation: "startSession" | "sendTurn";
+}): Effect.Effect<
+  { readonly model: string | undefined; readonly downgradedFrom: string | undefined },
+  ProviderAdapterValidationError
+> {
+  if (input.model?.trim() === "claude-opus-4-7" && !input.installedVersion) {
+    return Effect.fail(
+      new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: input.operation,
+        issue:
+          "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+      }),
+    );
+  }
+
+  return Effect.succeed(
+    normalizeClaudeSelectedModel({
+      model: input.model,
+      installedVersion: input.installedVersion,
+    }),
+  );
 }
 
 function resolveClaudeCliVersionEffect(

@@ -324,6 +324,9 @@ jobs:
           merge-multiple: true
           path: release-assets
 
+      - name: Install manifest merge dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
       - name: Merge macOS updater manifests
         run: |
           shopt -s nullglob
