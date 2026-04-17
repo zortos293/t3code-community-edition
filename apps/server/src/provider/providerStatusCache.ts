@@ -43,7 +43,9 @@ export const hydrateCachedProvider = (input: {
     status: input.cachedProvider.status,
     auth: input.cachedProvider.auth,
     checkedAt: input.cachedProvider.checkedAt,
-    quotaSnapshots: input.cachedProvider.quotaSnapshots,
+    ...(input.cachedProvider.quotaSnapshots
+      ? { quotaSnapshots: input.cachedProvider.quotaSnapshots }
+      : {}),
     slashCommands: input.cachedProvider.slashCommands,
     skills: input.cachedProvider.skills,
   };
