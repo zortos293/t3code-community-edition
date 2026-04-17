@@ -37,15 +37,21 @@ function getTestWindow(): Window & typeof globalThis {
   const testWindow = {
     localStorage,
   } as Window & typeof globalThis;
-  vi.stubGlobal("window", testWindow);
-  vi.stubGlobal("localStorage", localStorage);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: testWindow,
+  });
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: localStorage,
+  });
   return testWindow;
 }
 
 afterEach(() => {
-  vi.resetModules();
-  vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  Reflect.deleteProperty(globalThis, "window");
+  Reflect.deleteProperty(globalThis, "localStorage");
 });
 
 describe("clientPersistenceStorage", () => {
@@ -76,5 +82,53 @@ describe("clientPersistenceStorage", () => {
         },
       ],
     });
+  });
+
+  it("migrates legacy browser client settings during hydration", async () => {
+    const testWindow = getTestWindow();
+    testWindow.localStorage.setItem(
+      "t3code:app-settings:v1",
+      JSON.stringify({
+        confirmThreadArchive: true,
+        confirmThreadDelete: false,
+        diffWordWrap: true,
+        sidebarProjectGroupingMode: "repository_path",
+        sidebarProjectGroupingOverrides: {
+          "/repo": "separate",
+        },
+        sidebarProjectSortOrder: "manual",
+        sidebarThreadSortOrder: "created_at",
+        timestampFormat: "24-hour",
+      }),
+    );
+
+    const { CLIENT_SETTINGS_STORAGE_KEY, readBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+
+    expect(readBrowserClientSettings()).toEqual({
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      diffWordWrap: true,
+      sidebarProjectGroupingMode: "repository_path",
+      sidebarProjectGroupingOverrides: {
+        "/repo": "separate",
+      },
+      sidebarProjectSortOrder: "manual",
+      sidebarThreadSortOrder: "created_at",
+      timestampFormat: "24-hour",
+    });
+    expect(JSON.parse(testWindow.localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY)!)).toEqual({
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      diffWordWrap: true,
+      sidebarProjectGroupingMode: "repository_path",
+      sidebarProjectGroupingOverrides: {
+        "/repo": "separate",
+      },
+      sidebarProjectSortOrder: "manual",
+      sidebarThreadSortOrder: "created_at",
+      timestampFormat: "24-hour",
+    });
+    expect(testWindow.localStorage.getItem("t3code:app-settings:v1")).toBeNull();
   });
 });

@@ -27,6 +27,34 @@ function tokenizeCliArgs(input: string): string[] {
     const char = trimmed[index]!;
     const nextChar = trimmed[index + 1];
 
+    if (quote) {
+      if (char === "\\" && nextChar !== undefined && (nextChar === quote || nextChar === "\\")) {
+        const afterEscapedChar = trimmed[index + 2];
+        const looksLikeQuotedWindowsPath =
+          quote === '"' && nextChar === '"' && /^[A-Za-z]:\\/.test(current);
+        if (
+          looksLikeQuotedWindowsPath &&
+          (afterEscapedChar === undefined || /\s/.test(afterEscapedChar))
+        ) {
+          current += "\\";
+          tokenStarted = true;
+          continue;
+        }
+        current += nextChar;
+        tokenStarted = true;
+        index += 1;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+        tokenStarted = true;
+      }
+      continue;
+    }
+
     if (char === "\\") {
       const shouldUnescape =
         nextChar !== undefined &&
@@ -37,16 +65,6 @@ function tokenizeCliArgs(input: string): string[] {
         index += 1;
       } else {
         current += "\\";
-        tokenStarted = true;
-      }
-      continue;
-    }
-
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      } else {
-        current += char;
         tokenStarted = true;
       }
       continue;

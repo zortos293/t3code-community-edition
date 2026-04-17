@@ -471,7 +471,7 @@ describe("startSession", () => {
     }
   });
 
-  it("disposes an existing session before starting a replacement for the same thread", async () => {
+  it("keeps the existing session alive when replacement startup fails before initialization", async () => {
     const manager = new CodexAppServerManager();
     const existingContext = {
       session: {
@@ -527,10 +527,15 @@ describe("startSession", () => {
         }),
       ).rejects.toThrow("cwd missing");
 
-      expect(disposeSession).toHaveBeenCalledWith(existingContext, {
-        emitLifecycleEvent: false,
-      });
+      expect(disposeSession).not.toHaveBeenCalled();
       expect(assertSupportedCodexCliVersion).not.toHaveBeenCalled();
+      expect(
+        (
+          manager as unknown as {
+            sessions: Map<ThreadId, typeof existingContext>;
+          }
+        ).sessions.get(asThreadId("thread-1")),
+      ).toBe(existingContext);
     } finally {
       disposeSession.mockRestore();
       assertSupportedCodexCliVersion.mockRestore();
@@ -544,7 +549,7 @@ describe("startSession", () => {
     }
   });
 
-  it("continues replacement start when existing session disposal fails", async () => {
+  it("keeps the existing session mapped when replacement startup fails even if disposal would fail", async () => {
     const manager = new CodexAppServerManager();
     const existingContext = {
       session: {
@@ -602,10 +607,15 @@ describe("startSession", () => {
         }),
       ).rejects.toThrow("cwd missing");
 
-      expect(disposeSession).toHaveBeenCalledWith(existingContext, {
-        emitLifecycleEvent: false,
-      });
+      expect(disposeSession).not.toHaveBeenCalled();
       expect(assertSupportedCodexCliVersion).not.toHaveBeenCalled();
+      expect(
+        (
+          manager as unknown as {
+            sessions: Map<ThreadId, typeof existingContext>;
+          }
+        ).sessions.get(asThreadId("thread-1")),
+      ).toBe(existingContext);
     } finally {
       disposeSession.mockRestore();
       assertSupportedCodexCliVersion.mockRestore();

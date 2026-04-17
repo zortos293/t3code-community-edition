@@ -121,7 +121,16 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 
 export function supportsClaudeOpus47(version: string | null | undefined): boolean {
-  return version ? compareCliVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
+  if (!version) {
+    return false;
+  }
+
+  const normalized = version.trim();
+  if (!normalized || normalized.includes("-")) {
+    return false;
+  }
+
+  return compareCliVersions(normalized, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0;
 }
 
 function getBuiltInClaudeModelsForVersion(

@@ -50,6 +50,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("keeps Windows executable resource editing enabled for unsigned artifacts", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig("win", "nsis", "0.0.17", false, false, undefined);
+      assert.deepStrictEqual(config.win, {
+        target: ["nsis"],
+        icon: "icon.ico",
+      });
+    }),
+  );
+
   it.effect("normalizes mock update server ports from env-style strings", () =>
     Effect.gen(function* () {
       assert.equal(yield* resolveMockUpdateServerPort(undefined), undefined);

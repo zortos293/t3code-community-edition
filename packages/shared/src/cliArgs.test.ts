@@ -129,6 +129,20 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("keeps quoted Windows paths ending in a backslash separate from following args", () => {
+    expect(parseCliArgs('--root "C:\\Program Files\\Claude\\" --chrome')).toEqual({
+      flags: { root: "C:\\Program Files\\Claude\\", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted positional Windows paths ending in a backslash separate from following args", () => {
+    expect(parseCliArgs('"C:\\Program Files\\Claude\\" --chrome')).toEqual({
+      flags: { chrome: null },
+      positionals: ["C:\\Program Files\\Claude\\"],
+    });
+  });
+
   it("still unescapes escaped quotes and backslashes in string input", () => {
     expect(
       parseCliArgs(String.raw`--append-system-prompt "say \"hi\" from C:\\tools" --chrome`),
