@@ -1037,17 +1037,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       );
 
       it.effect(
-        "hides Claude Opus 4.7 on Claude prerelease builds until stable support lands",
+        "includes Claude Opus 4.7 on Claude prerelease builds newer than the minimum stable version",
         () =>
           Effect.gen(function* () {
             const status = yield* checkClaudeProviderStatus();
             assert.strictEqual(
               status.models.some((model) => model.slug === "claude-opus-4-7"),
-              false,
-            );
-            assert.strictEqual(
-              status.message,
-              "Claude Code v2.1.112-beta.1 is too old for Claude Opus 4.7. Upgrade to v2.1.111 or newer to access it.",
+              true,
             );
           }).pipe(
             Effect.provide(

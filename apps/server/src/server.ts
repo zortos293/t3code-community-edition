@@ -317,4 +317,8 @@ export const makeServerLayer = Layer.unwrap(
 );
 
 // Important: Only `ServerConfig` should be provided by the CLI layer!!! Don't let other requirements leak into the launch layer.
-export const runServer = Layer.launch(makeServerLayer) satisfies Effect.Effect<never, any, unknown>;
+export const runServer = Layer.launch(makeServerLayer) satisfies Effect.Effect<
+  never,
+  any,
+  ServerConfig
+>;

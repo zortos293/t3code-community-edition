@@ -157,7 +157,7 @@ interface ClaudeSessionContext {
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
   readonly claudeBinaryPath: string;
-  readonly installedClaudeVersion: string | null;
+  installedClaudeVersion: string | null;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
@@ -3033,6 +3033,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const context = yield* requireSession(input.threadId);
     const modelSelection =
       input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
+    const requestedModel =
+      normalizeModelSlug(modelSelection?.model, "claudeAgent") ?? modelSelection?.model?.trim();
 
     if (context.turnState) {
       // Auto-close a stale synthetic turn (from background agent responses
@@ -3040,9 +3042,17 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
+    const installedClaudeVersion =
+      requestedModel === "claude-opus-4-7"
+        ? yield* resolveCliVersion(context.claudeBinaryPath).pipe(
+            Effect.tap((version) =>
+              Effect.sync(() => void (context.installedClaudeVersion = version)),
+            ),
+          )
+        : context.installedClaudeVersion;
     const normalizedModel = yield* validateClaudeSelectedModel({
       model: modelSelection?.model,
-      installedVersion: context.installedClaudeVersion,
+      installedVersion: installedClaudeVersion,
       operation: "sendTurn",
     });
     const resolvedModelSelection =

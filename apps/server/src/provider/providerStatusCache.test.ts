@@ -166,6 +166,61 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
+  it("does not resurrect removed cached custom models during cache hydration", () => {
+    const cachedClaude = makeProvider("claudeAgent", {
+      models: [
+        {
+          slug: "claude-custom-removed",
+          name: "Claude Custom Removed",
+          isCustom: true,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "claude-runtime-discovered",
+          name: "Claude Runtime Discovered",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+    const fallbackClaude = makeProvider("claudeAgent", {
+      models: [
+        {
+          slug: "claude-opus-4-6",
+          name: "Claude Opus 4.6",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedClaude,
+        fallbackProvider: fallbackClaude,
+      }).models,
+      [fallbackClaude.models[0]!, cachedClaude.models[1]!],
+    );
+  });
+
   it("preserves missing quota snapshots during cache hydration", () => {
     const cachedCopilot = makeProvider("copilot", {
       quotaSnapshots: undefined,

@@ -1002,7 +1002,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   hasSession(threadId: ThreadId): boolean {
-    return this.sessions.has(threadId) || this.pendingSessions.has(threadId);
+    return this.sessions.has(threadId);
   }
 
   stopAll(): void {

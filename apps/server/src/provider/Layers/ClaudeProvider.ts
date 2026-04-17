@@ -127,7 +127,7 @@ export function supportsClaudeOpus47(version: string | null | undefined): boolea
   }
 
   const normalized = version.trim();
-  if (!normalized || normalized.includes("-")) {
+  if (!normalized) {
     return false;
   }
 
@@ -562,7 +562,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
   const checkedAt = new Date().toISOString();
   const allModels = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    getBuiltInClaudeModelsForVersion(null),
     PROVIDER,
     normalizeClaudeCustomModelsForVersion(claudeSettings.customModels, null),
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
@@ -757,7 +757,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): ServerProvider => {
   const checkedAt = new Date().toISOString();
   const models = providerModelsFromSettings(
-    BUILT_IN_MODELS,
+    getBuiltInClaudeModelsForVersion(null),
     PROVIDER,
     normalizeClaudeCustomModelsForVersion(claudeSettings.customModels, null),
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,

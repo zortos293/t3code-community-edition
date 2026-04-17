@@ -41,6 +41,9 @@ export const hydrateCachedProvider = (input: {
       modelsBySlug.set(model.slug, model);
     }
     for (const model of input.cachedProvider.models) {
+      if (model.isCustom && !modelsBySlug.has(model.slug)) {
+        continue;
+      }
       modelsBySlug.set(model.slug, model);
     }
     return [...modelsBySlug.values()];

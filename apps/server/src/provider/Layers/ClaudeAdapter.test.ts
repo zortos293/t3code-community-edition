@@ -541,7 +541,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
-      assert.equal(resolveCliVersionCalls, 1);
+      assert.equal(resolveCliVersionCalls, 2);
       const sessions = yield* adapter.listSessions();
       assert.equal(sessions[0]?.model, "claude-opus-4-6");
     }).pipe(
@@ -549,6 +549,51 @@ describe("ClaudeAdapterLive", () => {
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "refreshes the cached Claude CLI version only when Claude Opus 4.7 is requested",
+    () => {
+      let resolveCliVersionCalls = 0;
+      const harness = makeHarness({
+        resolveCliVersion: () => {
+          resolveCliVersionCalls += 1;
+          return Effect.succeed(resolveCliVersionCalls === 1 ? "2.1.110" : "2.1.111");
+        },
+      });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "use default model",
+          attachments: [],
+        });
+        assert.equal(resolveCliVersionCalls, 1);
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "switch to opus",
+          attachments: [],
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-7",
+          },
+        });
+
+        assert.equal(resolveCliVersionCalls, 2);
+        assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-7"]);
+        assert.equal((yield* adapter.listSessions())[0]?.model, "claude-opus-4-7");
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("fails explicitly when in-turn Claude Opus 4.7 support cannot be verified", () => {
     const harness = makeHarness({

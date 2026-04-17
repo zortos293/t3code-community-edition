@@ -888,6 +888,40 @@ describe("startSession", () => {
       ).pendingSessions.has(threadId),
     ).toBe(false);
   });
+
+  it("does not treat pending startup sessions as active via hasSession", () => {
+    const manager = new CodexAppServerManager();
+    const threadId = asThreadId("thread-pending-only");
+
+    (
+      manager as unknown as {
+        pendingSessions: Map<
+          ThreadId,
+          {
+            session: {
+              provider: "codex";
+              status: "connecting";
+              threadId: ThreadId;
+              runtimeMode: "full-access";
+              createdAt: string;
+              updatedAt: string;
+            };
+          }
+        >;
+      }
+    ).pendingSessions.set(threadId, {
+      session: {
+        provider: "codex",
+        status: "connecting",
+        threadId,
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:01.000Z",
+        updatedAt: "2026-02-10T00:00:01.000Z",
+      },
+    });
+
+    expect(manager.hasSession(threadId)).toBe(false);
+  });
 });
 
 describe("sendTurn", () => {
