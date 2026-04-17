@@ -628,6 +628,110 @@ describe("startSession", () => {
       manager.stopAll();
     }
   });
+
+  it("stops both the active and in-flight replacement sessions for the thread", () => {
+    const manager = new CodexAppServerManager();
+    const threadId = asThreadId("thread-1");
+    const existingContext = {
+      session: {
+        provider: "codex",
+        status: "ready",
+        threadId,
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+      stopping: false,
+      output: {
+        close: vi.fn(),
+      },
+      child: {
+        killed: true,
+      },
+    };
+    (
+      manager as unknown as {
+        sessions: Map<ThreadId, typeof existingContext>;
+      }
+    ).sessions.set(threadId, existingContext);
+
+    const pendingContext = {
+      session: {
+        provider: "codex",
+        status: "connecting",
+        threadId,
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:01.000Z",
+        updatedAt: "2026-02-10T00:00:01.000Z",
+      },
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+      stopping: false,
+      output: {
+        close: vi.fn(),
+      },
+      child: {
+        killed: true,
+      },
+    };
+    (
+      manager as unknown as {
+        pendingSessions: Map<ThreadId, typeof pendingContext>;
+      }
+    ).pendingSessions.set(threadId, pendingContext);
+
+    const disposeSession = vi.spyOn(
+      manager as unknown as {
+        disposeSession: (
+          context: unknown,
+          options?: { readonly emitLifecycleEvent?: boolean },
+        ) => void;
+      },
+      "disposeSession",
+    );
+
+    try {
+      manager.stopSession(threadId);
+
+      expect(disposeSession).toHaveBeenCalledTimes(2);
+      expect(disposeSession.mock.calls[0]?.[0]).toBe(pendingContext);
+      expect(disposeSession.mock.calls[1]?.[0]).toBe(existingContext);
+      expect(
+        (
+          manager as unknown as {
+            sessions: Map<ThreadId, typeof existingContext>;
+          }
+        ).sessions.has(threadId),
+      ).toBe(false);
+      expect(
+        (
+          manager as unknown as {
+            pendingSessions: Map<ThreadId, unknown>;
+          }
+        ).pendingSessions.has(threadId),
+      ).toBe(false);
+    } finally {
+      disposeSession.mockRestore();
+      (
+        manager as unknown as {
+          sessions: Map<ThreadId, typeof existingContext>;
+          pendingSessions: Map<ThreadId, unknown>;
+        }
+      ).sessions.clear();
+      (
+        manager as unknown as {
+          pendingSessions: Map<ThreadId, unknown>;
+        }
+      ).pendingSessions.clear();
+      manager.stopAll();
+    }
+  });
 });
 
 describe("sendTurn", () => {

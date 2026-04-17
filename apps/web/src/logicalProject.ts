@@ -139,6 +139,20 @@ export function deriveProjectGroupLabel(input: {
   representative: Pick<Project, "name" | "repositoryIdentity">;
   members: ReadonlyArray<Pick<Project, "name" | "repositoryIdentity">>;
 }): string {
+  const representativeName = input.representative.name.trim();
+  const representativeRepositoryDisplayName =
+    input.representative.repositoryIdentity?.displayName?.trim() ?? null;
+  const representativeRepositoryName =
+    input.representative.repositoryIdentity?.name?.trim() ?? null;
+
+  if (
+    representativeName.length > 0 &&
+    representativeName !== representativeRepositoryDisplayName &&
+    representativeName !== representativeRepositoryName
+  ) {
+    return representativeName;
+  }
+
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) => member.repositoryIdentity?.displayName),
   );
@@ -153,5 +167,5 @@ export function deriveProjectGroupLabel(input: {
     return sharedRepositoryNames[0]!;
   }
 
-  return input.representative.name;
+  return representativeName;
 }

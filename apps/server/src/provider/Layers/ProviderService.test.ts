@@ -657,6 +657,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
   it.effect("stops stale sessions in other providers after a successful replacement start", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
       const threadId = asThreadId("thread-provider-replacement");
 
       const codexSession = yield* provider.startSession(threadId, {
@@ -680,6 +681,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(claudeSession.provider, "claudeAgent");
       assert.deepEqual(routing.codex.stopSession.mock.calls, [[threadId]]);
       assert.equal(routing.claude.stopSession.mock.calls.length, 0);
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.provider, "claudeAgent");
+      assert.deepEqual(binding?.resumeCursor, claudeSession.resumeCursor);
 
       const sessions = yield* provider.listSessions();
       assert.deepEqual(
@@ -688,6 +692,51 @@ routing.layer("ProviderServiceLive routing", (it) => {
           .map((session) => session.provider),
         ["claudeAgent"],
       );
+    }),
+  );
+
+  it.effect("persists the replacement binding before stopping stale providers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-provider-binding-order");
+
+      yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-provider-binding-order",
+        runtimeMode: "full-access",
+      });
+
+      const bindingDuringStopRef = { current: null as null | unknown };
+      const originalStopSession = routing.codex.stopSession.getMockImplementation();
+      routing.codex.stopSession.mockImplementation((stoppedThreadId: ThreadId) =>
+        Effect.gen(function* () {
+          bindingDuringStopRef.current = Option.getOrUndefined(
+            yield* Effect.orDie(directory.getBinding(stoppedThreadId)),
+          );
+          if (!originalStopSession) {
+            return;
+          }
+          return yield* originalStopSession(stoppedThreadId);
+        }),
+      );
+
+      const replacement = yield* provider.startSession(threadId, {
+        provider: "claudeAgent",
+        threadId,
+        cwd: "/tmp/project-provider-binding-order",
+        runtimeMode: "full-access",
+      });
+
+      const bindingDuringStop = bindingDuringStopRef.current as {
+        provider?: string;
+        resumeCursor?: unknown;
+      } | null;
+      assert.equal(bindingDuringStop?.provider, "claudeAgent");
+      assert.deepEqual(bindingDuringStop?.resumeCursor, replacement.resumeCursor);
+
+      routing.codex.stopSession.mockImplementation(originalStopSession ?? (() => Effect.void));
     }),
   );
 

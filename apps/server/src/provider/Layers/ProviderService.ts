@@ -385,12 +385,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           );
         }
 
+        yield* upsertSessionBinding(session, threadId, {
+          modelSelection: input.modelSelection,
+        });
         yield* stopStaleSessionsForThread({
           threadId,
           currentProvider: adapter.provider,
-        });
-        yield* upsertSessionBinding(session, threadId, {
-          modelSelection: input.modelSelection,
         });
         yield* analytics.record("provider.session.started", {
           provider: session.provider,
