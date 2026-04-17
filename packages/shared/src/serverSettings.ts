@@ -1,4 +1,8 @@
-import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  ServerSettings,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { Schema } from "effect";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
@@ -61,8 +65,13 @@ export function applyServerSettingsPatch(
     return next;
   }
 
-  const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
-  const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
+  const currentProvider = current.textGenerationModelSelection.provider;
+  const provider = selectionPatch.provider ?? currentProvider;
+  const model =
+    selectionPatch.model ??
+    (selectionPatch.provider !== undefined && selectionPatch.provider !== currentProvider
+      ? DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[provider]
+      : current.textGenerationModelSelection.model);
   if (provider === "codex") {
     const textGenerationModelSelection = selectionPatch.options
       ? ({

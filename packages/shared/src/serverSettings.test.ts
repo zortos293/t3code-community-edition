@@ -110,6 +110,31 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("uses the new provider default git model when switching providers without a model", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: {
+        provider: "codex" as const,
+        model: "gpt-5.4-mini",
+        options: {
+          reasoningEffort: "high" as const,
+          fastMode: true,
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        textGenerationModelSelection: {
+          provider: "claudeAgent",
+        },
+      }).textGenerationModelSelection,
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "claude-haiku-4-5",
+    });
+  });
+
   it("preserves Claude launchArgs when applying a provider settings patch", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,

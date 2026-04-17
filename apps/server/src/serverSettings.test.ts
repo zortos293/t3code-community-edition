@@ -189,6 +189,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists a disabled selected provider while read-time access still falls back", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const next = yield* serverSettings.updateSettings({
+        providers: {
+          codex: {
+            enabled: false,
+          },
+        },
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      });
+
+      assert.deepEqual(next.textGenerationModelSelection, {
+        provider: "claudeAgent",
+        model: "claude-haiku-4-5",
+      });
+
+      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
+      assert.deepEqual(persisted.textGenerationModelSelection, {
+        provider: "codex",
+        model: "gpt-5.4",
+      });
+
+      const readBack = yield* serverSettings.getSettings;
+      assert.deepEqual(readBack.textGenerationModelSelection, {
+        provider: "claudeAgent",
+        model: "claude-haiku-4-5",
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("trims provider path settings when updates are applied", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;

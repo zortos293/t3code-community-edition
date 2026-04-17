@@ -474,6 +474,46 @@ describe("ClaudeAdapterLive", () => {
     },
   );
 
+  it.effect("rejects Claude Opus 4.7 aliases when CLI version is unknown at session start", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed(null),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      for (const model of ["opus", "opus-4.7", "claude-opus-4.7"] as const) {
+        const result = yield* adapter
+          .startSession({
+            threadId: ThreadId.make(`${THREAD_ID}-${model}`),
+            provider: "claudeAgent",
+            modelSelection: {
+              provider: "claudeAgent",
+              model,
+            },
+            runtimeMode: "full-access",
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") {
+          continue;
+        }
+        assert.deepEqual(
+          result.failure,
+          new ProviderAdapterValidationError({
+            provider: "claudeAgent",
+            operation: "startSession",
+            issue:
+              "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+          }),
+        );
+      }
+      assert.equal(harness.getLastCreateQueryInput(), undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("downgrades in-turn Claude Opus 4.7 switches when the installed CLI is too old", () => {
     let resolveCliVersionCalls = 0;
     const harness = makeHarness({
@@ -547,6 +587,52 @@ describe("ClaudeAdapterLive", () => {
             "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
         }),
       );
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects Claude Opus 4.7 aliases when CLI version is unknown in-turn", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed(null),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      for (const model of ["opus", "opus-4.7", "claude-opus-4.7"] as const) {
+        const result = yield* adapter
+          .sendTurn({
+            threadId: THREAD_ID,
+            input: "hello",
+            attachments: [],
+            modelSelection: {
+              provider: "claudeAgent",
+              model,
+            },
+          })
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") {
+          continue;
+        }
+        assert.deepEqual(
+          result.failure,
+          new ProviderAdapterValidationError({
+            provider: "claudeAgent",
+            operation: "sendTurn",
+            issue:
+              "Claude Opus 4.7 requires a verified Claude CLI version. Unable to confirm support because the installed CLI version could not be determined.",
+          }),
+        );
+      }
       assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

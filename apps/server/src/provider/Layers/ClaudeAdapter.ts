@@ -44,6 +44,7 @@ import {
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
+  normalizeModelSlug,
   resolveApiModelId,
   resolveEffort,
   trimOrNull,
@@ -3264,11 +3265,12 @@ function normalizeClaudeSelectedModel(input: {
   readonly model: string | undefined;
   readonly installedVersion: string | null | undefined;
 }): { readonly model: string | undefined; readonly downgradedFrom: string | undefined } {
-  const resolvedModel = resolveClaudeModelForVersion(input.model, input.installedVersion);
+  const canonicalModel = normalizeModelSlug(input.model, "claudeAgent") ?? input.model?.trim();
+  const resolvedModel = resolveClaudeModelForVersion(canonicalModel, input.installedVersion);
   return {
     model: resolvedModel,
     downgradedFrom:
-      input.model?.trim() === "claude-opus-4-7" && resolvedModel !== "claude-opus-4-7"
+      canonicalModel === "claude-opus-4-7" && resolvedModel !== "claude-opus-4-7"
         ? "claude-opus-4-7"
         : undefined,
   };
@@ -3282,7 +3284,8 @@ function validateClaudeSelectedModel(input: {
   { readonly model: string | undefined; readonly downgradedFrom: string | undefined },
   ProviderAdapterValidationError
 > {
-  if (input.model?.trim() === "claude-opus-4-7" && !input.installedVersion) {
+  const canonicalModel = normalizeModelSlug(input.model, "claudeAgent") ?? input.model?.trim();
+  if (canonicalModel === "claude-opus-4-7" && !input.installedVersion) {
     return Effect.fail(
       new ProviderAdapterValidationError({
         provider: PROVIDER,

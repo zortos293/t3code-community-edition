@@ -96,8 +96,8 @@ export class ServerSettingsService extends Context.Service<
                   ),
                 ),
               ),
-              Effect.map(resolveTextGenerationProvider),
               Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+              Effect.map(resolveTextGenerationProvider),
             ),
           streamChanges: Stream.empty,
         } satisfies ServerSettingsShape;
@@ -348,8 +348,8 @@ const makeServerSettings = Effect.gen(function* () {
             ),
           );
           const resolvedNext = resolveTextGenerationProvider(next);
-          yield* writeSettingsAtomically(resolvedNext);
-          yield* Cache.set(settingsCache, cacheKey, resolvedNext);
+          yield* writeSettingsAtomically(next);
+          yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(resolvedNext);
           return resolvedNext;
         }),
