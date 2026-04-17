@@ -49,6 +49,7 @@ import {
   trimOrNull,
 } from "@t3tools/shared/model";
 import {
+  Option,
   Cause,
   DateTime,
   Deferred,
@@ -62,11 +63,11 @@ import {
   Ref,
   Stream,
 } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -77,6 +78,12 @@ import {
 } from "../Errors.ts";
 import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+import { getClaudeModelCapabilities, resolveClaudeModelForVersion } from "./ClaudeProvider.ts";
+import {
+  DEFAULT_TIMEOUT_MS,
+  parseGenericCliVersion,
+  spawnAndCollect,
+} from "../providerSnapshot.ts";
 
 const PROVIDER = "claudeAgent" as const;
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
@@ -148,6 +155,7 @@ interface ClaudeSessionContext {
   session: ProviderSession;
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
+  readonly claudeBinaryPath: string;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
@@ -181,6 +189,7 @@ export interface ClaudeAdapterLiveOptions {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
   }) => ClaudeQueryRuntime;
+  readonly resolveCliVersion?: (binaryPath: string) => Effect.Effect<string | null>;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
@@ -963,6 +972,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const serverConfig = yield* ServerConfig;
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const nativeEventLogger =
     options?.nativeEventLogger ??
     (options?.nativeEventLogPath !== undefined
@@ -981,6 +991,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         prompt: input.prompt,
         options: input.options,
       }) as ClaudeQueryRuntime);
+  const resolveCliVersion =
+    options?.resolveCliVersion ??
+    ((binaryPath: string) =>
+      resolveClaudeCliVersionEffect(binaryPath).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+      ));
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -2828,8 +2844,22 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
-      const caps = getClaudeModelCapabilities(modelSelection?.model);
-      const apiModelId = modelSelection ? resolveApiModelId(modelSelection) : undefined;
+      const installedClaudeVersion = yield* resolveCliVersion(claudeBinaryPath);
+      const normalizedModel = normalizeClaudeSelectedModel({
+        model: modelSelection?.model,
+        installedVersion: installedClaudeVersion,
+      });
+      const resolvedModelSelection =
+        modelSelection && normalizedModel.model
+          ? {
+              ...modelSelection,
+              model: normalizedModel.model,
+            }
+          : modelSelection;
+      const caps = getClaudeModelCapabilities(resolvedModelSelection?.model);
+      const apiModelId = resolvedModelSelection
+        ? resolveApiModelId(resolvedModelSelection)
+        : undefined;
       const effort = (resolveEffort(caps, modelSelection?.options?.effort) ??
         null) as ClaudeAgentEffort | null;
       const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
@@ -2889,7 +2919,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         status: "ready",
         runtimeMode: input.runtimeMode,
         ...(input.cwd ? { cwd: input.cwd } : {}),
-        ...(modelSelection?.model ? { model: modelSelection.model } : {}),
+        ...(resolvedModelSelection?.model ? { model: resolvedModelSelection.model } : {}),
         ...(threadId ? { threadId } : {}),
         resumeCursor: {
           ...(threadId ? { threadId } : {}),
@@ -2905,6 +2935,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         session,
         promptQueue,
         query: queryRuntime,
+        claudeBinaryPath,
         streamFiber: undefined,
         startedAt,
         basePermissionMode: permissionMode,
@@ -3005,8 +3036,20 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
-    if (modelSelection?.model) {
-      const apiModelId = resolveApiModelId(modelSelection);
+    const installedClaudeVersion = yield* resolveCliVersion(context.claudeBinaryPath);
+    const normalizedModel = normalizeClaudeSelectedModel({
+      model: modelSelection?.model,
+      installedVersion: installedClaudeVersion,
+    });
+    const resolvedModelSelection =
+      modelSelection && normalizedModel.model
+        ? {
+            ...modelSelection,
+            model: normalizedModel.model,
+          }
+        : modelSelection;
+    if (resolvedModelSelection?.model) {
+      const apiModelId = resolveApiModelId(resolvedModelSelection);
       if (context.currentApiModelId !== apiModelId) {
         yield* Effect.tryPromise({
           try: () => context.query.setModel(apiModelId),
@@ -3016,7 +3059,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       context.session = {
         ...context.session,
-        model: modelSelection.model,
+        model: resolvedModelSelection.model,
       };
     }
 
@@ -3064,7 +3107,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       createdAt: turnStartedStamp.createdAt,
       threadId: context.session.threadId,
       turnId,
-      payload: modelSelection?.model ? { model: modelSelection.model } : {},
+      payload: resolvedModelSelection?.model ? { model: resolvedModelSelection.model } : {},
       providerRefs: {},
     });
 
@@ -3213,4 +3256,34 @@ export const ClaudeAdapterLive = Layer.effect(ClaudeAdapter, makeClaudeAdapter()
 
 export function makeClaudeAdapterLive(options?: ClaudeAdapterLiveOptions) {
   return Layer.effect(ClaudeAdapter, makeClaudeAdapter(options));
+}
+function normalizeClaudeSelectedModel(input: {
+  readonly model: string | undefined;
+  readonly installedVersion: string | null | undefined;
+}): { readonly model: string | undefined; readonly downgradedFrom: string | undefined } {
+  const resolvedModel = resolveClaudeModelForVersion(input.model, input.installedVersion);
+  return {
+    model: resolvedModel,
+    downgradedFrom:
+      input.model?.trim() === "claude-opus-4-7" && resolvedModel !== "claude-opus-4-7"
+        ? "claude-opus-4-7"
+        : undefined,
+  };
+}
+
+function resolveClaudeCliVersionEffect(
+  binaryPath: string,
+): Effect.Effect<string | null, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const command = ChildProcess.make(binaryPath, ["--version"], {
+    shell: process.platform === "win32",
+  });
+  return spawnAndCollect(binaryPath, command).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.map((result) =>
+      Option.isSome(result)
+        ? parseGenericCliVersion(`${result.value.stdout}\n${result.value.stderr}`)
+        : null,
+    ),
+    Effect.orElseSucceed(() => null),
+  );
 }

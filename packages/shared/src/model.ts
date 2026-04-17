@@ -56,18 +56,28 @@ export function resolveContextWindow(
   return hasContextWindowOption(caps, raw) ? raw : (defaultValue ?? undefined);
 }
 
+function emptyObjectToUndefined<T extends object>(value: T): T | undefined {
+  return Object.keys(value).length === 0 ? undefined : value;
+}
+
+type Mutable<T> = {
+  -readonly [K in keyof T]: T[K];
+};
+
 export function normalizeCodexModelOptionsWithCapabilities(
   caps: ModelCapabilities,
   modelOptions: CodexModelOptions | null | undefined,
 ): CodexModelOptions | undefined {
   const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
   const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
-  return {
-    ...(reasoningEffort
-      ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
-      : {}),
-    ...(fastMode !== undefined ? { fastMode } : {}),
-  };
+  const normalized: Mutable<CodexModelOptions> = {};
+  if (reasoningEffort) {
+    normalized.reasoningEffort = reasoningEffort as CodexModelOptions["reasoningEffort"];
+  }
+  if (fastMode !== undefined) {
+    normalized.fastMode = fastMode;
+  }
+  return emptyObjectToUndefined(normalized);
 }
 
 export function normalizeCopilotModelOptionsWithCapabilities(
@@ -75,11 +85,11 @@ export function normalizeCopilotModelOptionsWithCapabilities(
   modelOptions: CopilotModelOptions | null | undefined,
 ): CopilotModelOptions | undefined {
   const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
-  return {
-    ...(reasoningEffort
-      ? { reasoningEffort: reasoningEffort as CopilotModelOptions["reasoningEffort"] }
-      : {}),
-  };
+  const normalized: Mutable<CopilotModelOptions> = {};
+  if (reasoningEffort) {
+    normalized.reasoningEffort = reasoningEffort as CopilotModelOptions["reasoningEffort"];
+  }
+  return emptyObjectToUndefined(normalized);
 }
 
 export function normalizeClaudeModelOptionsWithCapabilities(
@@ -90,12 +100,20 @@ export function normalizeClaudeModelOptionsWithCapabilities(
   const thinking = caps.supportsThinkingToggle ? modelOptions?.thinking : undefined;
   const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
   const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
-  return {
-    ...(thinking !== undefined ? { thinking } : {}),
-    ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
-    ...(fastMode !== undefined ? { fastMode } : {}),
-    ...(contextWindow !== undefined ? { contextWindow } : {}),
-  };
+  const normalized: Mutable<ClaudeModelOptions> = {};
+  if (thinking !== undefined) {
+    normalized.thinking = thinking;
+  }
+  if (effort) {
+    normalized.effort = effort as ClaudeModelOptions["effort"];
+  }
+  if (fastMode !== undefined) {
+    normalized.fastMode = fastMode;
+  }
+  if (contextWindow !== undefined) {
+    normalized.contextWindow = contextWindow as ClaudeModelOptions["contextWindow"];
+  }
+  return emptyObjectToUndefined(normalized);
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {

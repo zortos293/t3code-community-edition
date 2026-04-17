@@ -41,7 +41,7 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = {
 };
 
 const PROVIDER = "claudeAgent" as const;
-const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
+export const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-7",
@@ -120,7 +120,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
-function supportsClaudeOpus47(version: string | null | undefined): boolean {
+export function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version ? compareCliVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
 }
 
@@ -133,9 +133,19 @@ function getBuiltInClaudeModelsForVersion(
   return BUILT_IN_MODELS.filter((model) => model.slug !== "claude-opus-4-7");
 }
 
-function formatClaudeOpus47UpgradeMessage(version: string | null): string {
+export function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   const versionLabel = version ? `v${version}` : "the installed version";
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
+}
+
+export function resolveClaudeModelForVersion(
+  model: string | null | undefined,
+  version: string | null | undefined,
+): string | undefined {
+  if (model?.trim() !== "claude-opus-4-7") {
+    return model?.trim() || undefined;
+  }
+  return supportsClaudeOpus47(version) ? "claude-opus-4-7" : "claude-opus-4-6";
 }
 
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {

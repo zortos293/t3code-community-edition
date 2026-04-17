@@ -106,6 +106,7 @@ type InstallProviderSettings = {
   binaryPlaceholder: string;
   binaryDescription: ReactNode;
   homePathKey?: "codexHomePath" | "copilotHomePath";
+  homePathLabel?: string;
   homePlaceholder?: string;
   homeDescription?: ReactNode;
 };
@@ -117,6 +118,7 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryPlaceholder: "Codex binary path",
     binaryDescription: "Path to the Codex binary",
     homePathKey: "codexHomePath",
+    homePathLabel: "CODEX_HOME path",
     homePlaceholder: "CODEX_HOME",
     homeDescription: "Optional custom Codex home and config directory.",
   },
@@ -132,6 +134,7 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryPlaceholder: "Copilot CLI path",
     binaryDescription: "Optional path to the GitHub Copilot CLI binary",
     homePathKey: "copilotHomePath",
+    homePathLabel: "COPILOT_HOME path",
     homePlaceholder: "COPILOT_HOME",
     homeDescription: "Optional custom GitHub Copilot home and config directory.",
   },
@@ -563,7 +566,6 @@ export function GeneralSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
-  const codexHomePath = settings.providers.codex.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
     const exports: string[] = [];
@@ -750,8 +752,15 @@ export function GeneralSettingsPanel() {
       binaryPlaceholder: providerSettings.binaryPlaceholder,
       binaryDescription: providerSettings.binaryDescription,
       homePathKey: providerSettings.homePathKey,
+      homePathLabel: providerSettings.homePathLabel,
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
+      homePathValue:
+        providerSettings.provider === "codex"
+          ? settings.providers.codex.homePath
+          : providerSettings.provider === "copilot"
+            ? settings.providers.copilot.homePath
+            : undefined,
       binaryPathValue: providerConfig.binaryPath,
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
@@ -1267,18 +1276,18 @@ export function GeneralSettingsPanel() {
                           className="block"
                         >
                           <span className="text-xs font-medium text-foreground">
-                            CODEX_HOME path
+                            {providerCard.homePathLabel}
                           </span>
                           <Input
                             id={`provider-install-${providerCard.homePathKey}`}
                             className="mt-1.5"
-                            value={codexHomePath}
+                            value={providerCard.homePathValue ?? ""}
                             onChange={(event) =>
                               updateSettings({
                                 providers: {
                                   ...settings.providers,
-                                  codex: {
-                                    ...settings.providers.codex,
+                                  [providerCard.provider]: {
+                                    ...settings.providers[providerCard.provider],
                                     homePath: event.target.value,
                                   },
                                 },

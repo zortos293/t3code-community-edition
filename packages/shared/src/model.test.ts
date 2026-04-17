@@ -10,6 +10,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCopilotModelOptionsWithCapabilities,
   normalizeModelSlug,
   resolveApiModelId,
   resolveContextWindow,
@@ -44,6 +45,14 @@ const claudeCaps: ModelCapabilities = {
     { value: "1m", label: "1M", isDefault: true },
   ],
   promptInjectedEffortLevels: ["ultrathink"],
+};
+
+const noOptionsCaps: ModelCapabilities = {
+  reasoningEffortLevels: [],
+  supportsFastMode: false,
+  supportsThinkingToggle: false,
+  contextWindowOptions: [],
+  promptInjectedEffortLevels: [],
 };
 
 describe("normalizeModelSlug", () => {
@@ -149,5 +158,29 @@ describe("normalize model options", () => {
         contextWindow: "200k",
       }),
     ).toEqual({ effort: "high", contextWindow: "200k" });
+  });
+
+  it("returns undefined when normalization removes every option", () => {
+    expect(
+      normalizeCodexModelOptionsWithCapabilities(noOptionsCaps, {
+        reasoningEffort: "high",
+        fastMode: true,
+      }),
+    ).toBeUndefined();
+
+    expect(
+      normalizeCopilotModelOptionsWithCapabilities(noOptionsCaps, {
+        reasoningEffort: "high",
+      }),
+    ).toBeUndefined();
+
+    expect(
+      normalizeClaudeModelOptionsWithCapabilities(noOptionsCaps, {
+        effort: "high",
+        thinking: false,
+        fastMode: true,
+        contextWindow: "1m",
+      }),
+    ).toBeUndefined();
   });
 });

@@ -134,6 +134,7 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
+  readonly resolveCliVersion?: ClaudeAdapterLiveOptions["resolveCliVersion"];
   readonly cwd?: string;
   readonly baseDir?: string;
 }) {
@@ -150,6 +151,11 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.resolveCliVersion
+      ? {
+          resolveCliVersion: config.resolveCliVersion,
+        }
+      : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -352,7 +358,9 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("maps the Claude Opus 4.7 default effort to the SDK-supported max value", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed("2.1.111"),
+    });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -374,7 +382,9 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("maps xhigh effort for Claude Opus 4.7 to the SDK-supported max value", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed("2.1.111"),
+    });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -392,6 +402,62 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "max");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("downgrades Claude Opus 4.7 to Opus 4.6 when the installed CLI is too old", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed("2.1.110"),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-opus-4-6");
+      assert.equal(session.model, "claude-opus-4-6");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("downgrades in-turn Claude Opus 4.7 switches when the installed CLI is too old", () => {
+    const harness = makeHarness({
+      resolveCliVersion: () => Effect.succeed("2.1.110"),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+        },
+      });
+
+      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
+      const sessions = yield* adapter.listSessions();
+      assert.equal(sessions[0]?.model, "claude-opus-4-6");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

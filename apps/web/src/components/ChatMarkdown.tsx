@@ -252,6 +252,7 @@ interface MarkdownFileLinkProps {
 }
 
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+const STANDALONE_FILE_URL_PATTERN = /\bfile:\/\/\/[^\s<>()]+/gi;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
 const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
@@ -321,6 +322,16 @@ function extractMarkdownLinkHrefs(text: string): string[] {
   const hrefs: string[] = [];
   for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
     const href = match[1]?.trim();
+    if (!href) continue;
+    hrefs.push(href);
+  }
+  return hrefs;
+}
+
+function extractStandaloneFileUrlHrefs(text: string): string[] {
+  const hrefs: string[] = [];
+  for (const match of text.matchAll(STANDALONE_FILE_URL_PATTERN)) {
+    const href = match[0]?.trim();
     if (!href) continue;
     hrefs.push(href);
   }
@@ -478,7 +489,10 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of extractMarkdownLinkHrefs(text)) {
+    for (const href of [
+      ...extractMarkdownLinkHrefs(text),
+      ...extractStandaloneFileUrlHrefs(text),
+    ]) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
@@ -499,7 +513,10 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
     () => ({
       a({ node: _node, href, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        const fileLinkMeta = normalizedHref
+          ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
+            resolveMarkdownFileLinkMeta(normalizedHref, cwd))
+          : null;
         if (!fileLinkMeta) {
           return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
         }
@@ -551,6 +568,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
     }),
     [
       diffThemeName,
+      cwd,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
