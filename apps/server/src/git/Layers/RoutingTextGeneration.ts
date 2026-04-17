@@ -4,7 +4,8 @@
  * request input.
  *
  * When `modelSelection.provider` is `"claudeAgent"` the request is forwarded to
- * the Claude layer; Copilot and Codex both use the Codex text-generation path.
+ * the Claude layer; for any other value (including the default `undefined`) it
+ * falls through to the Codex layer.
  *
  * @module RoutingTextGeneration
  */

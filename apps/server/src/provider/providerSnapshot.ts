@@ -11,7 +11,7 @@ import type {
 import { Effect, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { isWindowsCommandNotFound } from "../processRunner";
+import { isWindowsCommandNotFound } from "../processRunner.ts";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
 
@@ -148,9 +148,7 @@ export function buildServerProvider(input: {
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
-    ...(input.probe.quotaSnapshots && input.probe.quotaSnapshots.length > 0
-      ? { quotaSnapshots: [...input.probe.quotaSnapshots] }
-      : {}),
+    quotaSnapshots: [...(input.probe.quotaSnapshots ?? [])],
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
   };

@@ -105,7 +105,7 @@ type InstallProviderSettings = {
   title: string;
   binaryPlaceholder: string;
   binaryDescription: ReactNode;
-  homePathKey?: "codexHomePath";
+  homePathKey?: "codexHomePath" | "copilotHomePath";
   homePlaceholder?: string;
   homeDescription?: ReactNode;
 };
@@ -121,19 +121,19 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     homeDescription: "Optional custom Codex home and config directory.",
   },
   {
-    provider: "copilot",
-    title: "GitHub Copilot",
-    binaryPlaceholder: "GitHub Copilot CLI path (optional)",
-    binaryDescription:
-      "Optional path to a Copilot CLI binary. Leave blank to use the bundled SDK CLI.",
-    homePlaceholder: "~/.copilot",
-    homeDescription: "Optional Copilot home/config directory used for auth and mcp-config.json.",
-  },
-  {
     provider: "claudeAgent",
     title: "Claude",
     binaryPlaceholder: "Claude binary path",
     binaryDescription: "Path to the Claude binary",
+  },
+  {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    binaryPlaceholder: "Copilot CLI path",
+    binaryDescription: "Optional path to the GitHub Copilot CLI binary",
+    homePathKey: "copilotHomePath",
+    homePlaceholder: "COPILOT_HOME",
+    homeDescription: "Optional custom GitHub Copilot home and config directory.",
   },
 ] as const;
 
@@ -527,7 +527,8 @@ export function GeneralSettingsPanel() {
     claudeAgent: Boolean(
       settings.providers.claudeAgent.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
-      settings.providers.claudeAgent.customModels.length > 0,
+      settings.providers.claudeAgent.customModels.length > 0 ||
+      settings.providers.claudeAgent.launchArgs !== "",
     ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
@@ -1051,7 +1052,7 @@ export function GeneralSettingsPanel() {
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: { provider, model },
+                        textGenerationModelSelection: createModelSelection({ provider, model }),
                       },
                       serverProviders,
                     ),
@@ -1079,7 +1080,7 @@ export function GeneralSettingsPanel() {
                         textGenerationModelSelection: createModelSelection({
                           provider: textGenProvider,
                           model: textGenModel,
-                          ...(nextOptions !== undefined ? { options: nextOptions } : {}),
+                          ...(nextOptions ? { options: nextOptions } : {}),
                         }),
                       },
                       serverProviders,
@@ -1295,6 +1296,37 @@ export function GeneralSettingsPanel() {
                       </div>
                     ) : null}
 
+                    {providerCard.provider === "claudeAgent" ? (
+                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                        <label htmlFor="provider-install-claudeAgent-launch-args" className="block">
+                          <span className="text-xs font-medium text-foreground">
+                            Launch arguments
+                          </span>
+                          <Input
+                            id="provider-install-claudeAgent-launch-args"
+                            className="mt-1.5"
+                            value={settings.providers.claudeAgent.launchArgs}
+                            onChange={(event) =>
+                              updateSettings({
+                                providers: {
+                                  ...settings.providers,
+                                  claudeAgent: {
+                                    ...settings.providers.claudeAgent,
+                                    launchArgs: event.target.value,
+                                  },
+                                },
+                              })
+                            }
+                            placeholder="e.g. --chrome"
+                            spellCheck={false}
+                          />
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            Additional CLI arguments passed to Claude Code on session start.
+                          </span>
+                        </label>
+                      </div>
+                    ) : null}
+
                     <div className="border-t border-border/60 px-4 py-3 sm:px-5">
                       <div className="text-xs font-medium text-foreground">Models</div>
                       <div className="mt-1 text-xs text-muted-foreground">
@@ -1407,9 +1439,7 @@ export function GeneralSettingsPanel() {
                           placeholder={
                             providerCard.provider === "codex"
                               ? "gpt-6.7-codex-ultra-preview"
-                              : providerCard.provider === "copilot"
-                                ? "gpt-5"
-                                : "claude-sonnet-5-0"
+                              : "claude-sonnet-5-0"
                           }
                           spellCheck={false}
                         />

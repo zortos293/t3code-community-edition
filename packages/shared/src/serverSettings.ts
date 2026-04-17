@@ -1,6 +1,7 @@
-import { ServerSettings } from "@t3tools/contracts";
+import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
 import { Schema } from "effect";
-import { fromLenientJson } from "./schemaJson";
+import { deepMerge } from "./Struct.ts";
+import { fromLenientJson } from "./schemaJson.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 
@@ -37,4 +38,84 @@ export function parsePersistedServerObservabilitySettings(
   } catch {
     return { otlpTracesUrl: undefined, otlpMetricsUrl: undefined };
   }
+}
+
+function shouldReplaceTextGenerationModelSelection(
+  patch: ServerSettingsPatch["textGenerationModelSelection"] | undefined,
+): boolean {
+  return Boolean(patch && (patch.provider !== undefined || patch.model !== undefined));
+}
+
+/**
+ * Applies a server settings patch while treating textGenerationModelSelection as
+ * replace-on-provider/model updates. This prevents stale nested options from
+ * surviving a reset patch that intentionally omits options.
+ */
+export function applyServerSettingsPatch(
+  current: ServerSettings,
+  patch: ServerSettingsPatch,
+): ServerSettings {
+  const selectionPatch = patch.textGenerationModelSelection;
+  const next = deepMerge(current, patch);
+  if (!selectionPatch || !shouldReplaceTextGenerationModelSelection(selectionPatch)) {
+    return next;
+  }
+
+  const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
+  const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
+  if (provider === "codex") {
+    const textGenerationModelSelection = selectionPatch.options
+      ? ({
+          provider: "codex",
+          model,
+          options: selectionPatch.options as Extract<
+            ServerSettings["textGenerationModelSelection"],
+            { provider: "codex" }
+          >["options"],
+        } as Extract<ServerSettings["textGenerationModelSelection"], { provider: "codex" }>)
+      : ({ provider: "codex", model } as Extract<
+          ServerSettings["textGenerationModelSelection"],
+          { provider: "codex" }
+        >);
+    return {
+      ...next,
+      textGenerationModelSelection,
+    };
+  }
+  if (provider === "copilot") {
+    const textGenerationModelSelection = selectionPatch.options
+      ? ({
+          provider: "copilot",
+          model,
+          options: selectionPatch.options as Extract<
+            ServerSettings["textGenerationModelSelection"],
+            { provider: "copilot" }
+          >["options"],
+        } as Extract<ServerSettings["textGenerationModelSelection"], { provider: "copilot" }>)
+      : ({ provider: "copilot", model } as Extract<
+          ServerSettings["textGenerationModelSelection"],
+          { provider: "copilot" }
+        >);
+    return {
+      ...next,
+      textGenerationModelSelection,
+    };
+  }
+  const textGenerationModelSelection = selectionPatch.options
+    ? ({
+        provider: "claudeAgent",
+        model,
+        options: selectionPatch.options as Extract<
+          ServerSettings["textGenerationModelSelection"],
+          { provider: "claudeAgent" }
+        >["options"],
+      } as Extract<ServerSettings["textGenerationModelSelection"], { provider: "claudeAgent" }>)
+    : ({ provider: "claudeAgent", model } as Extract<
+        ServerSettings["textGenerationModelSelection"],
+        { provider: "claudeAgent" }
+      >);
+  return {
+    ...next,
+    textGenerationModelSelection,
+  };
 }
