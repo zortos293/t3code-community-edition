@@ -193,7 +193,6 @@ const CodexSettingsPatch = Schema.Struct({
   binaryPath: Schema.optionalKey(Schema.String),
   homePath: Schema.optionalKey(Schema.String),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-  launchArgs: Schema.optionalKey(Schema.String),
 });
 
 const ClaudeSettingsPatch = Schema.Struct({

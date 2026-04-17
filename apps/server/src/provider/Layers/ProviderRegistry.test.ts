@@ -1036,6 +1036,47 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ),
       );
 
+      it.effect("normalizes custom Claude Opus 4.7 models on older Claude Code versions", () =>
+        Effect.gen(function* () {
+          const serverSettings = yield* ServerSettingsService;
+          yield* serverSettings.updateSettings({
+            providers: {
+              claudeAgent: {
+                customModels: ["claude-opus-4-7", "claude-custom"],
+              },
+            },
+          });
+
+          const status = yield* checkClaudeProviderStatus();
+          assert.strictEqual(
+            status.models.some((model) => model.slug === "claude-opus-4-7"),
+            false,
+          );
+          assert.strictEqual(
+            status.models.filter((model) => model.slug === "claude-opus-4-6").length,
+            1,
+          );
+          assert.strictEqual(
+            status.models.some((model) => model.slug === "claude-custom"),
+            true,
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.110\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns a display label for claude subscription types", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(() => Effect.succeed("maxplan"));

@@ -115,6 +115,29 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("preserves literal backslashes in Windows-style paths", () => {
+    expect(parseCliArgs(String.raw`--root C:\Users\testuser\project --chrome`)).toEqual({
+      flags: { root: String.raw`C:\Users\testuser\project`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves literal backslashes inside quoted values", () => {
+    expect(parseCliArgs(String.raw`--root "C:\Program Files\Claude" --chrome`)).toEqual({
+      flags: { root: String.raw`C:\Program Files\Claude`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("still unescapes escaped quotes and backslashes in string input", () => {
+    expect(
+      parseCliArgs(String.raw`--append-system-prompt "say \"hi\" from C:\\tools" --chrome`),
+    ).toEqual({
+      flags: { "append-system-prompt": String.raw`say "hi" from C:\tools`, chrome: null },
+      positionals: [],
+    });
+  });
+
   it("parses quoted values in --key=value syntax", () => {
     expect(parseCliArgs('--launch-arg="--project Claude Code" --debug')).toEqual({
       flags: { "launch-arg": "--project Claude Code", debug: null },

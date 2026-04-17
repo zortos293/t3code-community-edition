@@ -434,8 +434,12 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("downgrades in-turn Claude Opus 4.7 switches when the installed CLI is too old", () => {
+    let resolveCliVersionCalls = 0;
     const harness = makeHarness({
-      resolveCliVersion: () => Effect.succeed("2.1.110"),
+      resolveCliVersion: () => {
+        resolveCliVersionCalls += 1;
+        return Effect.succeed("2.1.110");
+      },
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -456,6 +460,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
+      assert.equal(resolveCliVersionCalls, 1);
       const sessions = yield* adapter.listSessions();
       assert.equal(sessions[0]?.model, "claude-opus-4-6");
     }).pipe(

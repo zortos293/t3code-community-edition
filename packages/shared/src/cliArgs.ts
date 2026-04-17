@@ -11,7 +11,6 @@ function tokenizeCliArgs(input: string): string[] {
   const tokens: string[] = [];
   let current = "";
   let quote: '"' | "'" | null = null;
-  let escaping = false;
   let tokenStarted = false;
 
   const pushCurrent = () => {
@@ -23,17 +22,23 @@ function tokenizeCliArgs(input: string): string[] {
     tokenStarted = false;
   };
 
-  for (const char of input.trim()) {
-    if (escaping) {
-      current += char;
-      tokenStarted = true;
-      escaping = false;
-      continue;
-    }
+  const trimmed = input.trim();
+  for (let index = 0; index < trimmed.length; index++) {
+    const char = trimmed[index]!;
+    const nextChar = trimmed[index + 1];
 
     if (char === "\\") {
-      tokenStarted = true;
-      escaping = true;
+      const shouldUnescape =
+        nextChar !== undefined &&
+        (/\s/.test(nextChar) || nextChar === '"' || nextChar === "'" || nextChar === "\\");
+      if (shouldUnescape) {
+        current += nextChar;
+        tokenStarted = true;
+        index += 1;
+      } else {
+        current += "\\";
+        tokenStarted = true;
+      }
       continue;
     }
 
@@ -59,11 +64,6 @@ function tokenizeCliArgs(input: string): string[] {
     }
 
     current += char;
-    tokenStarted = true;
-  }
-
-  if (escaping) {
-    current += "\\";
     tokenStarted = true;
   }
 

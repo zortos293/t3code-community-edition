@@ -9,6 +9,11 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const WINDOWS_POWERSHELL_BOOTSTRAP_PATHS = [
+  "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+  "C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+] as const;
 
 type ExecFileSyncLike = (
   file: string,
@@ -247,7 +252,7 @@ export function readEnvironmentFromWindowsShell(
     "-Command",
     command,
   ];
-  for (const shell of WINDOWS_SHELL_CANDIDATES) {
+  for (const shell of [...WINDOWS_POWERSHELL_BOOTSTRAP_PATHS, ...WINDOWS_SHELL_CANDIDATES]) {
     try {
       const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
 

@@ -133,6 +133,16 @@ function getBuiltInClaudeModelsForVersion(
   return BUILT_IN_MODELS.filter((model) => model.slug !== "claude-opus-4-7");
 }
 
+function normalizeClaudeCustomModelsForVersion(
+  customModels: ReadonlyArray<string>,
+  version: string | null | undefined,
+): ReadonlyArray<string> {
+  return customModels.flatMap((model) => {
+    const resolved = resolveClaudeModelForVersion(model, version);
+    return resolved ? [resolved] : [];
+  });
+}
+
 export function formatClaudeOpus47UpgradeMessage(version: string | null): string {
   const versionLabel = version ? `v${version}` : "the installed version";
   return `Claude Code ${versionLabel} is too old for Claude Opus 4.7. Upgrade to v${MINIMUM_CLAUDE_OPUS_4_7_VERSION} or newer to access it.`;
@@ -539,7 +549,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
     PROVIDER,
-    claudeSettings.customModels,
+    normalizeClaudeCustomModelsForVersion(claudeSettings.customModels, null),
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 
@@ -624,7 +634,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const models = providerModelsFromSettings(
     getBuiltInClaudeModelsForVersion(parsedVersion),
     PROVIDER,
-    claudeSettings.customModels,
+    normalizeClaudeCustomModelsForVersion(claudeSettings.customModels, parsedVersion),
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
   const opus47UpgradeMessage = supportsClaudeOpus47(parsedVersion)
@@ -734,7 +744,7 @@ const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): ServerProvid
   const models = providerModelsFromSettings(
     BUILT_IN_MODELS,
     PROVIDER,
-    claudeSettings.customModels,
+    normalizeClaudeCustomModelsForVersion(claudeSettings.customModels, null),
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
 

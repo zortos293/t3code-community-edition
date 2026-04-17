@@ -211,7 +211,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       PATH: "C:\\Users\\testuser\\AppData\\Roaming\\npm",
     });
     expect(execFile).toHaveBeenCalledWith(
-      "pwsh.exe",
+      "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
       expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
       { encoding: "utf8", timeout: 5000 },
     );
@@ -247,14 +247,14 @@ describe("readEnvironmentFromWindowsShell", () => {
       PATH: "C:\\Tools",
     });
     expect(execFile).toHaveBeenCalledWith(
-      "pwsh.exe",
+      "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
       expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
       { encoding: "utf8", timeout: 5000 },
     );
     expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
   });
 
-  it("falls back to Windows PowerShell when pwsh.exe is unavailable", () => {
+  it("falls back to PATH-based shells when bootstrap PowerShell paths are unavailable", () => {
     const execFile = vi.fn<
       (
         file: string,
@@ -262,8 +262,8 @@ describe("readEnvironmentFromWindowsShell", () => {
         options: { encoding: "utf8"; timeout: number },
       ) => string
     >((file) => {
-      if (file === "pwsh.exe") {
-        throw new Error("spawn pwsh.exe ENOENT");
+      if (file !== "pwsh.exe") {
+        throw new Error(`spawn ${file} ENOENT`);
       }
       return "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n";
     });
@@ -271,14 +271,57 @@ describe("readEnvironmentFromWindowsShell", () => {
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
       PATH: "C:\\Tools",
     });
-    expect(execFile).toHaveBeenNthCalledWith(1, "pwsh.exe", expect.any(Array), {
+    expect(execFile).toHaveBeenNthCalledWith(
+      1,
+      "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+      expect.any(Array),
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(execFile).toHaveBeenNthCalledWith(
+      2,
+      "C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe",
+      expect.any(Array),
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(execFile).toHaveBeenNthCalledWith(
+      3,
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      expect.any(Array),
+      {
+        encoding: "utf8",
+        timeout: 5000,
+      },
+    );
+    expect(execFile).toHaveBeenNthCalledWith(4, "pwsh.exe", expect.any(Array), {
       encoding: "utf8",
       timeout: 5000,
     });
-    expect(execFile).toHaveBeenNthCalledWith(2, "powershell.exe", expect.any(Array), {
-      encoding: "utf8",
-      timeout: 5000,
+  });
+
+  it("uses absolute Windows PowerShell paths before PATH lookups", () => {
+    const execFile = vi.fn<
+      (
+        file: string,
+        args: ReadonlyArray<string>,
+        options: { encoding: "utf8"; timeout: number },
+      ) => string
+    >((file) => {
+      if (file === "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe") {
+        return "__T3CODE_ENV_PATH_START__\nC:\\Profile\\Node\n__T3CODE_ENV_PATH_END__\n";
+      }
+      throw new Error(`spawn ${file} ENOENT`);
     });
+
+    expect(readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, execFile)).toEqual({
+      PATH: "C:\\Profile\\Node",
+    });
+    expect(execFile).toHaveBeenCalledTimes(3);
   });
 });
 

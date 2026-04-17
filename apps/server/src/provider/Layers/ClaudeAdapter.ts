@@ -156,6 +156,7 @@ interface ClaudeSessionContext {
   readonly promptQueue: Queue.Queue<PromptQueueItem>;
   readonly query: ClaudeQueryRuntime;
   readonly claudeBinaryPath: string;
+  readonly installedClaudeVersion: string | null;
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
@@ -2936,6 +2937,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         promptQueue,
         query: queryRuntime,
         claudeBinaryPath,
+        installedClaudeVersion,
         streamFiber: undefined,
         startedAt,
         basePermissionMode: permissionMode,
@@ -3036,10 +3038,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* completeTurn(context, "completed");
     }
 
-    const installedClaudeVersion = yield* resolveCliVersion(context.claudeBinaryPath);
     const normalizedModel = normalizeClaudeSelectedModel({
       model: modelSelection?.model,
-      installedVersion: installedClaudeVersion,
+      installedVersion: context.installedClaudeVersion,
     });
     const resolvedModelSelection =
       modelSelection && normalizedModel.model
