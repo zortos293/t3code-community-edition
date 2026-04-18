@@ -9,6 +9,11 @@ const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
+const WINDOWS_POWERSHELL_BOOTSTRAP_PATHS = [
+  "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+  "C:\\Program Files (x86)\\PowerShell\\7\\pwsh.exe",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+] as const;
 
 type ExecFileSyncLike = (
   file: string,
@@ -142,6 +147,26 @@ function buildEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
+  const mergePathCommand = [
+    "$pathValues = @(",
+    "  [Environment]::GetEnvironmentVariable('PATH', 'User'),",
+    "  [Environment]::GetEnvironmentVariable('PATH', 'Machine'),",
+    "  $env:PATH",
+    ")",
+    "$seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)",
+    "$entries = foreach ($pathValue in $pathValues) {",
+    "  if ([string]::IsNullOrWhiteSpace($pathValue)) { continue }",
+    "  foreach ($entry in $pathValue -split ';') {",
+    "    $trimmed = $entry.Trim()",
+    "    if ($trimmed.Length -eq 0) { continue }",
+    "    $normalized = $trimmed.Trim('\"')",
+    "    if ($normalized.Length -eq 0) { continue }",
+    "    if ($seen.Add($normalized)) { $trimmed }",
+    "  }",
+    "}",
+    "$value = [string]::Join(';', $entries)",
+  ].join("; ");
+
   return [
     "$ErrorActionPreference = 'Stop'",
     ...names.flatMap((name) => {
@@ -151,7 +176,9 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        ...(name === "PATH"
+          ? [mergePathCommand]
+          : [`$value = [Environment]::GetEnvironmentVariable('${name}')`]),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
@@ -247,7 +274,7 @@ export function readEnvironmentFromWindowsShell(
     "-Command",
     command,
   ];
-  for (const shell of WINDOWS_SHELL_CANDIDATES) {
+  for (const shell of [...WINDOWS_POWERSHELL_BOOTSTRAP_PATHS, ...WINDOWS_SHELL_CANDIDATES]) {
     try {
       const output = execFile(shell, args, { encoding: "utf8", timeout: 5000 });
 

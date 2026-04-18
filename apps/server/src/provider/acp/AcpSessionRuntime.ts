@@ -521,9 +521,18 @@ const makeAcpSessionRuntime = (
             if (modeState?.currentModeId === modeId) {
               return Effect.succeed({} satisfies EffectAcpSchema.SetSessionModeResponse);
             }
-            return setConfigOption("mode", modeId).pipe(
-              Effect.tap(() => updateCurrentModeId(modeId)),
-              Effect.as({} satisfies EffectAcpSchema.SetSessionModeResponse),
+            return getStartedState.pipe(
+              Effect.flatMap((started) => {
+                const requestPayload = {
+                  sessionId: started.sessionId,
+                  modeId,
+                } satisfies EffectAcpSchema.SetSessionModeRequest;
+                return runLoggedRequest(
+                  "session/set_mode",
+                  requestPayload,
+                  acp.agent.setSessionMode(requestPayload),
+                ).pipe(Effect.tap(() => updateCurrentModeId(modeId)));
+              }),
             );
           }),
         ),

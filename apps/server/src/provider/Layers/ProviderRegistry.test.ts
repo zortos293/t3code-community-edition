@@ -583,7 +583,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         assert.strictEqual(haveProvidersChanged(providers, [...providers]), false);
       });
 
-      it("preserves previously discovered provider models when a refresh returns none", () => {
+      it("does not reintroduce models removed from the latest provider snapshot", () => {
         const previousProvider = {
           provider: "cursor",
           status: "ready",
@@ -615,9 +615,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           models: [],
         } satisfies ServerProvider;
 
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-          ...previousProvider.models,
-        ]);
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+          [],
+        );
       });
 
       it("fills missing capabilities from the previous provider snapshot", () => {

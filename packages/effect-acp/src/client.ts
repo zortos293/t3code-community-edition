@@ -108,6 +108,13 @@ export interface AcpClientShape {
       payload: AcpSchema.SetSessionModelRequest,
     ) => Effect.Effect<AcpSchema.SetSessionModelResponse, AcpError.AcpError>;
     /**
+     * Selects the active session mode for a session.
+     * @see https://agentclientprotocol.com/protocol/schema#session/set_mode
+     */
+    readonly setSessionMode: (
+      payload: AcpSchema.SetSessionModeRequest,
+    ) => Effect.Effect<AcpSchema.SetSessionModeResponse, AcpError.AcpError>;
+    /**
      * Updates a session configuration option.
      * @see https://agentclientprotocol.com/protocol/schema#session/set_config_option
      */
@@ -473,6 +480,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
       resumeSession: (payload) => callRpc(rpc[AGENT_METHODS.session_resume](payload)),
       closeSession: (payload) => callRpc(rpc[AGENT_METHODS.session_close](payload)),
       setSessionModel: (payload) => callRpc(rpc[AGENT_METHODS.session_set_model](payload)),
+      setSessionMode: (payload) => callRpc(rpc[AGENT_METHODS.session_set_mode](payload)),
       setSessionConfigOption: (payload) =>
         callRpc(rpc[AGENT_METHODS.session_set_config_option](payload)),
       prompt: (payload) => callRpc(rpc[AGENT_METHODS.session_prompt](payload)),

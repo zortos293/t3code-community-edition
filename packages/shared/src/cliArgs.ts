@@ -7,6 +7,96 @@ export interface ParseCliArgsOptions {
   readonly booleanFlags?: readonly string[];
 }
 
+interface ParsedCliToken {
+  readonly value: string;
+  readonly quoted: boolean;
+}
+
+function tokenizeCliArgs(input: string): ParsedCliToken[] {
+  const tokens: ParsedCliToken[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let tokenStarted = false;
+  let tokenQuoted = false;
+
+  const pushCurrent = () => {
+    if (!tokenStarted) {
+      return;
+    }
+    tokens.push({ value: current, quoted: tokenQuoted });
+    current = "";
+    tokenStarted = false;
+    tokenQuoted = false;
+  };
+
+  const trimmed = input.trim();
+  for (let index = 0; index < trimmed.length; index++) {
+    const char = trimmed[index]!;
+    const nextChar = trimmed[index + 1];
+
+    if (quote) {
+      if (char === "\\" && nextChar !== undefined && (nextChar === quote || nextChar === "\\")) {
+        const afterEscapedChar = trimmed[index + 2];
+        const looksLikeQuotedWindowsPath =
+          quote === '"' && nextChar === '"' && /^[A-Za-z]:\\/.test(current);
+        if (
+          looksLikeQuotedWindowsPath &&
+          (afterEscapedChar === undefined || /\s/.test(afterEscapedChar))
+        ) {
+          current += "\\";
+          tokenStarted = true;
+          continue;
+        }
+        current += nextChar;
+        tokenStarted = true;
+        index += 1;
+        continue;
+      }
+
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+        tokenStarted = true;
+      }
+      continue;
+    }
+
+    if (char === "\\") {
+      const shouldUnescape =
+        nextChar !== undefined &&
+        (/\s/.test(nextChar) || nextChar === '"' || nextChar === "'" || nextChar === "\\");
+      if (shouldUnescape) {
+        current += nextChar;
+        tokenStarted = true;
+        index += 1;
+      } else {
+        current += "\\";
+        tokenStarted = true;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      tokenStarted = true;
+      tokenQuoted = true;
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      pushCurrent();
+      continue;
+    }
+
+    current += char;
+    tokenStarted = true;
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
 /**
  * Parse CLI-style arguments into flags and positionals.
  *
@@ -33,7 +123,9 @@ export function parseCliArgs(
   options?: ParseCliArgsOptions,
 ): ParsedCliArgs {
   const tokens =
-    typeof args === "string" ? args.trim().split(/\s+/).filter(Boolean) : Array.from(args);
+    typeof args === "string"
+      ? tokenizeCliArgs(args)
+      : Array.from(args, (value) => ({ value, quoted: false }));
   const booleanSet = options?.booleanFlags ? new Set(options.booleanFlags) : undefined;
 
   const flags: Record<string, string | null> = {};
@@ -41,9 +133,10 @@ export function parseCliArgs(
 
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]!;
+    const tokenValue = token.value;
 
-    if (token.startsWith("--")) {
-      const rest = token.slice(2);
+    if (tokenValue.startsWith("--") && (!token.quoted || tokenValue.includes("="))) {
+      const rest = tokenValue.slice(2);
       if (!rest) continue;
 
       // Handle --key=value syntax
@@ -61,14 +154,14 @@ export function parseCliArgs(
 
       // Handle --key value or --flag (boolean)
       const next = tokens[i + 1];
-      if (next !== undefined && !next.startsWith("--")) {
-        flags[rest] = next;
+      if (next !== undefined && (!next.value.startsWith("--") || next.quoted)) {
+        flags[rest] = next.value;
         i++;
       } else {
         flags[rest] = null;
       }
     } else {
-      positionals.push(token);
+      positionals.push(tokenValue);
     }
   }
 

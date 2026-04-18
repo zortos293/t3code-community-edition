@@ -99,6 +99,94 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("preserves quoted values in string input", () => {
+    expect(parseCliArgs('--append-system-prompt "always think step by step" --chrome')).toEqual({
+      flags: { "append-system-prompt": "always think step by step", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves escaped whitespace in string input", () => {
+    expect(
+      parseCliArgs(String.raw`--append-system-prompt always\ think\ step\ by\ step --chrome`),
+    ).toEqual({
+      flags: { "append-system-prompt": "always think step by step", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves literal backslashes in Windows-style paths", () => {
+    expect(parseCliArgs(String.raw`--root C:\Users\testuser\project --chrome`)).toEqual({
+      flags: { root: String.raw`C:\Users\testuser\project`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("preserves literal backslashes inside quoted values", () => {
+    expect(parseCliArgs(String.raw`--root "C:\Program Files\Claude" --chrome`)).toEqual({
+      flags: { root: String.raw`C:\Program Files\Claude`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted Windows paths ending in a backslash separate from following args", () => {
+    expect(parseCliArgs('--root "C:\\Program Files\\Claude\\" --chrome')).toEqual({
+      flags: { root: "C:\\Program Files\\Claude\\", chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted positional Windows paths ending in a backslash separate from following args", () => {
+    expect(parseCliArgs('"C:\\Program Files\\Claude\\" --chrome')).toEqual({
+      flags: { chrome: null },
+      positionals: ["C:\\Program Files\\Claude\\"],
+    });
+  });
+
+  it("still unescapes escaped quotes and backslashes in string input", () => {
+    expect(
+      parseCliArgs(String.raw`--append-system-prompt "say \"hi\" from C:\\tools" --chrome`),
+    ).toEqual({
+      flags: { "append-system-prompt": String.raw`say "hi" from C:\tools`, chrome: null },
+      positionals: [],
+    });
+  });
+
+  it("parses quoted values in --key=value syntax", () => {
+    expect(parseCliArgs('--launch-arg="--project Claude Code" --debug')).toEqual({
+      flags: { "launch-arg": "--project Claude Code", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted --key value arguments starting with -- as values", () => {
+    expect(parseCliArgs('--launch-arg "--project Claude Code" --debug')).toEqual({
+      flags: { "launch-arg": "--project Claude Code", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("keeps quoted dangerous-skip flag strings as values", () => {
+    expect(parseCliArgs('--launch-arg "--dangerously-skip-permissions" --debug')).toEqual({
+      flags: { "launch-arg": "--dangerously-skip-permissions", debug: null },
+      positionals: [],
+    });
+  });
+
+  it("treats quoted standalone double-dash tokens as positional values rather than flags", () => {
+    expect(parseCliArgs('"--dangerously-skip-permissions" --debug')).toEqual({
+      flags: { debug: null },
+      positionals: ["--dangerously-skip-permissions"],
+    });
+  });
+
+  it("preserves intentionally empty quoted values", () => {
+    expect(parseCliArgs('--append-system-prompt "" --chrome')).toEqual({
+      flags: { "append-system-prompt": "", chrome: null },
+      positionals: [],
+    });
+  });
+
   it("ignores bare -- with no flag name", () => {
     expect(parseCliArgs("--")).toEqual({ flags: {}, positionals: [] });
   });

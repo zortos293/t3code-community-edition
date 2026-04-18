@@ -285,6 +285,24 @@ const program = Effect.gen(function* () {
     }),
   );
 
+  yield* agent.handleSetSessionMode((request) =>
+    Effect.gen(function* () {
+      const nextModeId = request.modeId.trim();
+      if (!nextModeId) {
+        return {};
+      }
+      currentModeId = nextModeId;
+      yield* agent.client.sessionUpdate({
+        sessionId: request.sessionId,
+        update: {
+          sessionUpdate: "current_mode_update",
+          currentModeId,
+        },
+      });
+      return {};
+    }),
+  );
+
   yield* agent.handleCancel(({ sessionId }) =>
     Effect.sync(() => {
       cancelledSessions.add(String(sessionId ?? "mock-session-1"));
