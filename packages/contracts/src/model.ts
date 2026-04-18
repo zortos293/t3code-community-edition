@@ -113,6 +113,8 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind,
 export const GIT_TEXT_GENERATION_PROVIDERS = [
   "codex",
   "claudeAgent",
+  "opencode",
+  "cursor",
 ] as const satisfies ReadonlyArray<ProviderKind>;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {

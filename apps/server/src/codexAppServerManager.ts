@@ -449,7 +449,6 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
-    const existingContext = this.sessions.get(threadId);
     const existingPendingContext = this.pendingSessions.get(threadId);
 
     try {
@@ -467,6 +466,23 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
           await Effect.logWarning("codex app-server failed to dispose existing session", {
             threadId,
             existingStatus: existingContext.session.status,
+            cause: error instanceof Error ? error.message : String(error),
+          }).pipe(this.runPromise);
+        }
+      }
+      if (existingPendingContext && existingPendingContext !== existingContext) {
+        await Effect.logWarning("codex app-server replacing pending session", {
+          threadId,
+          existingStatus: existingPendingContext.session.status,
+        }).pipe(this.runPromise);
+        try {
+          this.disposeSession(existingPendingContext, {
+            emitLifecycleEvent: false,
+          });
+        } catch (error) {
+          await Effect.logWarning("codex app-server failed to dispose pending session", {
+            threadId,
+            existingStatus: existingPendingContext.session.status,
             cause: error instanceof Error ? error.message : String(error),
           }).pipe(this.runPromise);
         }
@@ -990,6 +1006,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       this.emitLifecycleEvent(context, "session/closed", "Session stopped");
     }
     this.sessions.delete(context.session.threadId);
+    this.pendingSessions.delete(context.session.threadId);
   }
 
   listSessions(): ProviderSession[] {

@@ -97,7 +97,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
-  it("hydrates cached provider status while preserving current settings-derived models", () => {
+  it("hydrates cached provider status while keeping settings-derived model membership authoritative", () => {
     const cachedCodex = makeProvider("codex", {
       checkedAt: "2026-04-10T12:00:00.000Z",
       models: [
@@ -112,6 +112,20 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
             contextWindowOptions: [],
             promptInjectedEffortLevels: [],
           },
+        },
+        {
+          slug: "gpt-5.4",
+          name: "GPT-5.4",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+          billingMultiplier: 2,
+          maxContextWindowTokens: 128_000,
         },
       ],
       message: "Cached message",
@@ -150,11 +164,10 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       {
         ...fallbackCodex,
         models: [
-          ...fallbackCodex.models,
           {
-            slug: "gpt-5-mini",
-            name: "GPT-5 Mini",
-            isCustom: false,
+            ...fallbackCodex.models[0]!,
+            billingMultiplier: 2,
+            maxContextWindowTokens: 128_000,
             capabilities: {
               reasoningEffortLevels: [],
               supportsFastMode: false,
@@ -173,6 +186,37 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         skills: cachedCodex.skills,
         message: cachedCodex.message,
       },
+    );
+  });
+
+  it("does not resurrect cached-only models after they are removed from current settings", () => {
+    const cachedCodex = makeProvider("codex", {
+      models: [
+        {
+          slug: "gpt-legacy-custom",
+          name: "GPT Legacy Custom",
+          isCustom: true,
+          capabilities: null,
+        },
+      ],
+    });
+    const fallbackCodex = makeProvider("codex", {
+      models: [
+        {
+          slug: "gpt-5.4",
+          name: "GPT-5.4",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedCodex,
+        fallbackProvider: fallbackCodex,
+      }).models,
+      fallbackCodex.models,
     );
   });
 

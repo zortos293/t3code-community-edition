@@ -618,6 +618,129 @@ describe("startSession", () => {
       manager.stopAll();
     }
   });
+
+  it("disposes an existing pending session before starting a replacement for the same thread", async () => {
+    const manager = new CodexAppServerManager();
+    const existingPendingContext = {
+      session: {
+        provider: "codex",
+        status: "connecting",
+        threadId: asThreadId("thread-1"),
+        runtimeMode: "full-access",
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+    };
+
+    (
+      manager as unknown as {
+        pendingSessions: Map<ThreadId, typeof existingPendingContext>;
+      }
+    ).pendingSessions.set(asThreadId("thread-1"), existingPendingContext);
+
+    const disposeSession = vi
+      .spyOn(
+        manager as unknown as {
+          disposeSession: (
+            context: typeof existingPendingContext,
+            options?: { readonly emitLifecycleEvent?: boolean },
+          ) => void;
+        },
+        "disposeSession",
+      )
+      .mockImplementation(() => {});
+    const assertSupportedCodexCliVersion = vi
+      .spyOn(
+        manager as unknown as {
+          assertSupportedCodexCliVersion: (input: {
+            binaryPath: string;
+            cwd: string;
+            homePath?: string;
+          }) => void;
+        },
+        "assertSupportedCodexCliVersion",
+      )
+      .mockImplementation(() => {});
+    const processCwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+      throw new Error("cwd missing");
+    });
+
+    try {
+      await expect(
+        manager.startSession({
+          threadId: asThreadId("thread-1"),
+          provider: "codex",
+          binaryPath: "codex",
+          runtimeMode: "full-access",
+        }),
+      ).rejects.toThrow("cwd missing");
+
+      expect(disposeSession).toHaveBeenCalledWith(existingPendingContext, {
+        emitLifecycleEvent: false,
+      });
+      expect(assertSupportedCodexCliVersion).not.toHaveBeenCalled();
+    } finally {
+      disposeSession.mockRestore();
+      assertSupportedCodexCliVersion.mockRestore();
+      processCwd.mockRestore();
+      (
+        manager as unknown as {
+          pendingSessions: Map<ThreadId, typeof existingPendingContext>;
+        }
+      ).pendingSessions.clear();
+      manager.stopAll();
+    }
+  });
+
+  it("removes a connecting pending session from the pending map when stopped", () => {
+    const manager = new CodexAppServerManager();
+    const outputClose = vi.fn();
+    const child = {
+      killed: true,
+    } as unknown as NodeJS.Process & import("node:child_process").ChildProcessWithoutNullStreams;
+    const pendingContext = {
+      session: {
+        provider: "codex" as const,
+        status: "connecting" as const,
+        threadId: asThreadId("thread-connecting"),
+        runtimeMode: "full-access" as const,
+        createdAt: "2026-02-10T00:00:00.000Z",
+        updatedAt: "2026-02-10T00:00:00.000Z",
+      },
+      account: {
+        type: "unknown" as const,
+        planType: null,
+        sparkEnabled: true,
+      },
+      child,
+      output: {
+        close: outputClose,
+      },
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+      nextRequestId: 1,
+      stopping: false,
+    };
+
+    (
+      manager as unknown as {
+        pendingSessions: Map<ThreadId, typeof pendingContext>;
+      }
+    ).pendingSessions.set(asThreadId("thread-connecting"), pendingContext);
+
+    manager.stopSession(asThreadId("thread-connecting"));
+
+    expect(
+      (
+        manager as unknown as {
+          pendingSessions: Map<ThreadId, typeof pendingContext>;
+        }
+      ).pendingSessions.has(asThreadId("thread-connecting")),
+    ).toBe(false);
+    expect(outputClose).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("sendTurn", () => {

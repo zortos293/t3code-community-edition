@@ -562,7 +562,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                               thread.session !== null && thread.session.status !== "stopped",
                           }),
                         ),
-                        Effect.catch(() => Effect.succeed(false)),
+                        Effect.catch(() => Effect.succeed(true)),
                       )
                   : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);

@@ -25,8 +25,23 @@ const mergeProviderModels = (
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
   cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
-  const fallbackSlugs = new Set(fallbackModels.map((model) => model.slug));
-  return [...fallbackModels, ...cachedModels.filter((model) => !fallbackSlugs.has(model.slug))];
+  if (cachedModels.length === 0) {
+    return fallbackModels;
+  }
+  const cachedBySlug = new Map(cachedModels.map((model) => [model.slug, model] as const));
+  return fallbackModels.map((fallbackModel) => {
+    const cachedModel = cachedBySlug.get(fallbackModel.slug);
+    if (!cachedModel) {
+      return fallbackModel;
+    }
+    return {
+      ...fallbackModel,
+      billingMultiplier: fallbackModel.billingMultiplier ?? cachedModel.billingMultiplier,
+      maxContextWindowTokens:
+        fallbackModel.maxContextWindowTokens ?? cachedModel.maxContextWindowTokens,
+      capabilities: fallbackModel.capabilities ?? cachedModel.capabilities,
+    };
+  });
 };
 
 export const orderProviderSnapshots = (
