@@ -73,6 +73,31 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     }),
   );
 
+
+  it.effect("ignores stale writes when a newer provider snapshot is already cached", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-stale-" });
+      const filePath = resolveProviderStatusCachePath({
+        cacheDir: tempDir,
+        provider: "codex",
+      });
+      const newerProvider = makeProvider("codex", {
+        checkedAt: "2026-04-11T01:00:00.000Z",
+        version: "2.0.0",
+      });
+      const olderProvider = makeProvider("codex", {
+        checkedAt: "2026-04-11T00:00:00.000Z",
+        version: "1.0.0",
+      });
+
+      yield* writeProviderStatusCache({ filePath, provider: newerProvider });
+      yield* writeProviderStatusCache({ filePath, provider: olderProvider });
+
+      assert.deepStrictEqual(yield* readProviderStatusCache(filePath), newerProvider);
+    }),
+  );
+
   it("hydrates cached provider status while preserving current settings-derived models", () => {
     const cachedCodex = makeProvider("codex", {
       checkedAt: "2026-04-10T12:00:00.000Z",

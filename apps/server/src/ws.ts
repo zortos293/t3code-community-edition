@@ -988,6 +988,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   providerRegistry.refresh("codex"),
                   providerRegistry.refresh("copilot"),
                   providerRegistry.refresh("claudeAgent"),
+                  providerRegistry.refresh("opencode"),
+                  providerRegistry.refresh("cursor"),
                 ],
                 {
                   concurrency: "unbounded",

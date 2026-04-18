@@ -61,7 +61,8 @@ import { useTerminalStateStore } from "~/terminalStateStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
-import { derivePhysicalProjectKey } from "../../logicalProject";
+import { deriveLogicalProjectKeyFromSettings, derivePhysicalProjectKey } from "../../logicalProject";
+import { getClientSettingsSnapshot } from "../../hooks/useSettings";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -468,9 +469,14 @@ function coalesceOrchestrationUiEvents(
 
 function syncProjectUiFromStore() {
   const projects = selectProjectsAcrossEnvironments(useStore.getState());
+  const clientSettings = getClientSettingsSnapshot();
   useUiStateStore.getState().syncProjects(
     projects.map((project) => ({
       key: derivePhysicalProjectKey(project),
+      logicalId: deriveLogicalProjectKeyFromSettings(project, {
+        sidebarProjectGroupingMode: clientSettings.sidebarProjectGroupingMode,
+        sidebarProjectGroupingOverrides: clientSettings.sidebarProjectGroupingOverrides,
+      }),
       cwd: project.cwd,
     })),
   );
@@ -541,9 +547,14 @@ function applyRecoveredEventBatch(
   useStore.getState().applyOrchestrationEvents(uiEvents, environmentId);
   if (needsProjectUiSync) {
     const projects = selectProjectsAcrossEnvironments(useStore.getState());
+    const clientSettings = getClientSettingsSnapshot();
     useUiStateStore.getState().syncProjects(
       projects.map((project) => ({
         key: derivePhysicalProjectKey(project),
+        logicalId: deriveLogicalProjectKeyFromSettings(project, {
+          sidebarProjectGroupingMode: clientSettings.sidebarProjectGroupingMode,
+          sidebarProjectGroupingOverrides: clientSettings.sidebarProjectGroupingOverrides,
+        }),
         cwd: project.cwd,
       })),
     );

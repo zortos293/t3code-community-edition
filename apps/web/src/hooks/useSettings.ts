@@ -38,6 +38,7 @@ function emitClientSettingsChange() {
 function getClientSettingsSnapshot(): ClientSettings {
   return clientSettingsSnapshot;
 }
+export { getClientSettingsSnapshot };
 
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;

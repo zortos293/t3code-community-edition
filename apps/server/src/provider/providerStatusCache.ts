@@ -1,6 +1,6 @@
 import * as nodePath from "node:path";
 import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@t3tools/contracts";
-import { Cause, Effect, FileSystem, Path, Schema } from "effect";
+import { Cause, Effect, FileSystem, Path, Schema, Semaphore } from "effect";
 
 export const PROVIDER_CACHE_IDS = [
   "codex",
@@ -13,6 +13,8 @@ export const PROVIDER_CACHE_IDS = [
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
 );
+
+const cacheWriteSemaphoreByPath = new Map<string, Semaphore.Semaphore>();
 
 const providerOrderRank = (provider: ServerProvider["provider"]): number => {
   const rank = PROVIDER_CACHE_IDS.indexOf(provider);
@@ -97,25 +99,60 @@ export const readProviderStatusCache = (filePath: string) =>
     );
   });
 
+const parseCheckedAt = (value: string): number => {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.NaN;
+};
+
+const isStaleCacheWrite = (input: {
+  readonly current: ServerProvider | undefined;
+  readonly next: ServerProvider;
+}): boolean => {
+  if (!input.current || input.current.provider !== input.next.provider) {
+    return false;
+  }
+  const currentCheckedAt = parseCheckedAt(input.current.checkedAt);
+  const nextCheckedAt = parseCheckedAt(input.next.checkedAt);
+  if (!Number.isFinite(currentCheckedAt) || !Number.isFinite(nextCheckedAt)) {
+    return false;
+  }
+  return currentCheckedAt > nextCheckedAt;
+};
+
+const getCacheWriteSemaphore = (filePath: string): Semaphore.Semaphore => {
+  const existing = cacheWriteSemaphoreByPath.get(filePath);
+  if (existing) {
+    return existing;
+  }
+  const semaphore = Effect.runSync(Semaphore.make(1));
+  cacheWriteSemaphoreByPath.set(filePath, semaphore);
+  return semaphore;
+};
+
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
-}) => {
-  const tempPath = `${input.filePath}.${process.pid}.${Date.now()}.tmp`;
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const encoded = `${JSON.stringify(input.provider, null, 2)}\n`;
+}) =>
+  getCacheWriteSemaphore(input.filePath).withPermits(1)(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const currentProvider = yield* readProviderStatusCache(input.filePath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+      );
+      if (isStaleCacheWrite({ current: currentProvider, next: input.provider })) {
+        return;
+      }
 
-    yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
-    yield* fs.writeFileString(tempPath, encoded);
-    yield* fs.rename(tempPath, input.filePath);
-  }).pipe(
-    Effect.ensuring(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }));
-      }),
-    ),
+      const tempPath = `${input.filePath}.${process.pid}.${Date.now()}.tmp`;
+      const encoded = `${JSON.stringify(input.provider, null, 2)}\n`;
+
+      yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
+      yield* fs.writeFileString(tempPath, encoded);
+      yield* fs.rename(tempPath, input.filePath).pipe(
+        Effect.ensuring(
+          fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true })),
+        ),
+      );
+    }),
   );
-};

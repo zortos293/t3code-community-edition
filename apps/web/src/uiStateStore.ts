@@ -16,6 +16,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 ] as const;
 
 interface PersistedUiState {
+  hasExpandedProjectState?: boolean;
   expandedProjectLogicalIds?: string[];
   expandedProjectCwds?: string[];
   projectOrderLogicalIds?: string[];
@@ -68,6 +69,7 @@ const persistedProjectOrderCwds: string[] = [];
 const currentProjectCwdById = new Map<string, string>();
 const currentProjectLogicalIdById = new Map<string, string>();
 let legacyKeysCleanedUp = false;
+let hasPersistedExpandedProjectState = false;
 
 function readPersistedState(): UiState {
   if (typeof window === "undefined") {
@@ -128,6 +130,10 @@ function sanitizePersistedThreadChangedFilesExpanded(
 }
 
 function hydratePersistedProjectState(parsed: PersistedUiState): void {
+  hasPersistedExpandedProjectState =
+    parsed.hasExpandedProjectState === true ||
+    parsed.expandedProjectLogicalIds !== undefined ||
+    parsed.expandedProjectCwds !== undefined;
   persistedExpandedProjectLogicalIds.clear();
   persistedExpandedProjectCwds.clear();
   persistedProjectOrderLogicalIds.length = 0;
@@ -206,6 +212,7 @@ function persistState(state: UiState): void {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
+        hasExpandedProjectState: true,
         expandedProjectLogicalIds,
         expandedProjectCwds,
         projectOrderLogicalIds,
@@ -308,11 +315,11 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
         ? previousExpandedById[previousProjectIdForLogicalId]
         : undefined) ??
       (previousProjectIdForCwd ? previousExpandedById[previousProjectIdForCwd] : undefined) ??
-      (persistedExpandedProjectLogicalIds.size > 0
-        ? persistedExpandedProjectLogicalIds.has(logicalId)
-        : persistedExpandedProjectCwds.size > 0
-          ? persistedExpandedProjectCwds.has(project.cwd)
-          : true);
+      (hasPersistedExpandedProjectState
+        ? persistedExpandedProjectLogicalIds.has(logicalId) ||
+          (persistedExpandedProjectLogicalIds.size === 0 &&
+            persistedExpandedProjectCwds.has(project.cwd))
+        : true);
     nextExpandedById[project.key] = expanded;
     return {
       id: project.key,

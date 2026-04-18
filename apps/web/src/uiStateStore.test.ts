@@ -1,5 +1,5 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearThreadUi,
@@ -11,6 +11,11 @@ import {
   syncThreads,
   type UiState,
 } from "./uiStateStore";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
@@ -295,6 +300,48 @@ describe("uiStateStore pure functions", () => {
     ]);
 
     expect(next.projectOrder).toEqual([recreatedProjectKeyB, recreatedProjectKeyA]);
+  });
+
+  it("useUiStateStore preserves all-collapsed project state across reload", async () => {
+    vi.useFakeTimers();
+    const storage = new Map<string, string>();
+    const localStorage = {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        storage.set(key, value);
+      },
+      removeItem: (key: string) => {
+        storage.delete(key);
+      },
+      clear: () => {
+        storage.clear();
+      },
+      key: (index: number) => [...storage.keys()][index] ?? null,
+      get length() {
+        return storage.size;
+      },
+    } satisfies Storage;
+    const testWindow = {
+      localStorage,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as Window & typeof globalThis;
+    vi.stubGlobal("window", testWindow);
+    vi.stubGlobal("localStorage", localStorage);
+
+    vi.resetModules();
+    const firstModule = await import("./uiStateStore");
+    firstModule.useUiStateStore.getState().syncProjects([{ key: "project-1", cwd: "/tmp/project-1" }]);
+    firstModule.useUiStateStore.getState().setProjectExpanded("project-1", false);
+    vi.advanceTimersByTime(600);
+
+    vi.resetModules();
+    const secondModule = await import("./uiStateStore");
+    secondModule.useUiStateStore
+      .getState()
+      .syncProjects([{ key: "project-1", cwd: "/tmp/project-1" }]);
+
+    expect(secondModule.useUiStateStore.getState().projectExpandedById["project-1"]).toBe(false);
   });
 
   it("syncProjects returns a new state when only project cwd changes", () => {

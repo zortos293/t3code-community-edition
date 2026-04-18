@@ -365,6 +365,37 @@ describe("thread selection memoization", () => {
     ).toBe(false);
     expect(selectThreadExistsByRef(state, null)).toBe(false);
   });
+  it("reuses derived threads when shell modelSelection objects are recreated with equal values", () => {
+    const thread = makeThread({
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+        options: { effort: "max", fastMode: true },
+      },
+    });
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const firstState = makeState(thread);
+    const secondState = applyOrchestrationEvent(
+      firstState,
+      makeEvent("thread.meta-updated", {
+        threadId: thread.id,
+        title: thread.title,
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-6",
+          options: { effort: "max", fastMode: true },
+        },
+        updatedAt: thread.updatedAt,
+      }),
+      thread.environmentId,
+    );
+
+    const first = selectThreadByRef(firstState, ref);
+    const second = selectThreadByRef(secondState, ref);
+
+    expect(secondState).toBe(firstState);
+    expect(second).toBe(first);
+  });
 });
 
 describe("setThreadBranch", () => {

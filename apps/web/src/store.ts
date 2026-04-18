@@ -20,7 +20,7 @@ import type {
 } from "@t3tools/contracts";
 import { ProviderKind } from "@t3tools/contracts";
 import type { ThreadId, TurnId } from "@t3tools/contracts";
-import { Schema } from "effect";
+import { Equal, Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
@@ -377,6 +377,19 @@ function threadSessionsEqual(
   );
 }
 
+function modelSelectionsEqual(
+  left: ThreadShell["modelSelection"] | undefined,
+  right: ThreadShell["modelSelection"] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  return (
+    left.provider === right.provider &&
+    left.model === right.model &&
+    Equal.equals(left.options, right.options)
+  );
+}
+
 function sidebarThreadSummariesEqual(
   left: SidebarThreadSummary | undefined,
   right: SidebarThreadSummary,
@@ -409,7 +422,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.codexThreadId === right.codexThreadId &&
     left.projectId === right.projectId &&
     left.title === right.title &&
-    left.modelSelection === right.modelSelection &&
+    modelSelectionsEqual(left.modelSelection, right.modelSelection) &&
     left.runtimeMode === right.runtimeMode &&
     left.interactionMode === right.interactionMode &&
     left.error === right.error &&

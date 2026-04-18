@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Option, Schema, SchemaIssue, SchemaTransformation } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
@@ -46,7 +46,7 @@ export const ProviderSession = Schema.Struct({
 });
 export type ProviderSession = typeof ProviderSession.Type;
 
-export const ProviderSessionStartInput = Schema.Struct({
+const ProviderSessionStartInputBase = Schema.Struct({
   threadId: ThreadId,
   provider: Schema.optional(ProviderKind),
   cwd: Schema.optional(TrimmedNonEmptyString),
@@ -56,6 +56,31 @@ export const ProviderSessionStartInput = Schema.Struct({
   sandboxMode: Schema.optional(ProviderSandboxMode),
   runtimeMode: RuntimeMode,
 });
+export const ProviderSessionStartInput = ProviderSessionStartInputBase.pipe(
+  Schema.decodeTo(
+    Schema.toType(ProviderSessionStartInputBase),
+    SchemaTransformation.transformOrFail({
+      decode: (input) => {
+        const derivedProvider = input.provider ?? input.modelSelection?.provider;
+        if (
+          input.provider !== undefined &&
+          input.modelSelection !== undefined &&
+          input.provider !== input.modelSelection.provider
+        ) {
+          return Effect.fail(
+            new SchemaIssue.InvalidValue(Option.some(input), {
+              message: `Provider session start input provider '${input.provider}' must match modelSelection provider '${input.modelSelection.provider}'.`,
+            }),
+          );
+        }
+        return Effect.succeed(
+          derivedProvider === undefined ? input : { ...input, provider: derivedProvider },
+        );
+      },
+      encode: Effect.succeed,
+    }),
+  ),
+);
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
 
 export const ProviderSendTurnInput = Schema.Struct({

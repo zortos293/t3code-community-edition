@@ -10,7 +10,12 @@
  * @module RoutingTextGeneration
  */
 import { Effect, Layer, Context } from "effect";
-import type { ProviderKind } from "@t3tools/contracts";
+import {
+  DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  type ProviderKind,
+  type ModelSelection,
+} from "@t3tools/contracts";
+import { createModelSelection, resolveModelSlugForProvider } from "@t3tools/shared/model";
 
 import {
   TextGeneration,
@@ -42,6 +47,36 @@ class OpenCodeTextGen extends Context.Service<OpenCodeTextGen, TextGenerationSha
   "t3/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
 ) {}
 
+export const resolveTextGenerationProvider = (
+  provider: ProviderKind | undefined,
+): TextGenerationProvider =>
+  provider === "claudeAgent" || provider === "cursor" || provider === "opencode"
+    ? provider
+    : "codex";
+
+export const normalizeTextGenerationModelSelection = (
+  modelSelection: ModelSelection,
+): ModelSelection => {
+  const provider = resolveTextGenerationProvider(modelSelection.provider);
+  if (provider === modelSelection.provider) {
+    return createModelSelection(
+      provider,
+      resolveModelSlugForProvider(provider, modelSelection.model),
+      modelSelection.options,
+    );
+  }
+
+  if (modelSelection.provider === "copilot") {
+    return createModelSelection("codex", DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex, {
+      ...(modelSelection.options?.reasoningEffort
+        ? { reasoningEffort: modelSelection.options.reasoningEffort }
+        : {}),
+    });
+  }
+
+  return createModelSelection(provider, DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[provider]);
+};
+
 // ---------------------------------------------------------------------------
 // Routing implementation
 // ---------------------------------------------------------------------------
@@ -60,20 +95,43 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
         : provider === "cursor"
           ? cursor
           : codex;
-  const resolveProvider = (provider: ProviderKind | undefined): TextGenerationProvider =>
-    provider === "claudeAgent" || provider === "cursor" || provider === "opencode"
-      ? provider
-      : "codex";
+  const normalizeInput = <
+    TInput extends {
+      readonly modelSelection: ModelSelection;
+    },
+  >(
+    input: TInput,
+  ): { readonly provider: TextGenerationProvider; readonly input: TInput } => {
+    const normalizedModelSelection = normalizeTextGenerationModelSelection(input.modelSelection);
+    return {
+      provider: resolveTextGenerationProvider(normalizedModelSelection.provider),
+      input:
+        normalizedModelSelection === input.modelSelection
+          ? input
+          : {
+              ...input,
+              modelSelection: normalizedModelSelection,
+            },
+    };
+  };
 
   return {
-    generateCommitMessage: (input) =>
-      route(resolveProvider(input.modelSelection.provider)).generateCommitMessage(input),
-    generatePrContent: (input) =>
-      route(resolveProvider(input.modelSelection.provider)).generatePrContent(input),
-    generateBranchName: (input) =>
-      route(resolveProvider(input.modelSelection.provider)).generateBranchName(input),
-    generateThreadTitle: (input) =>
-      route(resolveProvider(input.modelSelection.provider)).generateThreadTitle(input),
+    generateCommitMessage: (input) => {
+      const normalized = normalizeInput(input);
+      return route(normalized.provider).generateCommitMessage(normalized.input);
+    },
+    generatePrContent: (input) => {
+      const normalized = normalizeInput(input);
+      return route(normalized.provider).generatePrContent(normalized.input);
+    },
+    generateBranchName: (input) => {
+      const normalized = normalizeInput(input);
+      return route(normalized.provider).generateBranchName(normalized.input);
+    },
+    generateThreadTitle: (input) => {
+      const normalized = normalizeInput(input);
+      return route(normalized.provider).generateThreadTitle(normalized.input);
+    },
   } satisfies TextGenerationShape;
 });
 
