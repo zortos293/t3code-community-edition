@@ -1,20 +1,47 @@
 import * as nodePath from "node:path";
 import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@t3tools/contracts";
-import { Cause, Effect, FileSystem, Path, Schema } from "effect";
+import { Cause, Effect, FileSystem, Path, Schema, Semaphore } from "effect";
 
 export const PROVIDER_CACHE_IDS = [
   "codex",
   "copilot",
   "claudeAgent",
+  "opencode",
+  "cursor",
 ] as const satisfies ReadonlyArray<ServerProvider["provider"]>;
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
 );
 
+const cacheWriteSemaphoreByPath = new Map<string, Semaphore.Semaphore>();
+
 const providerOrderRank = (provider: ServerProvider["provider"]): number => {
   const rank = PROVIDER_CACHE_IDS.indexOf(provider);
   return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
+};
+
+const mergeProviderModels = (
+  fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
+  cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
+): ReadonlyArray<ServerProvider["models"][number]> => {
+  if (cachedModels.length === 0) {
+    return fallbackModels;
+  }
+  const cachedBySlug = new Map(cachedModels.map((model) => [model.slug, model] as const));
+  return fallbackModels.map((fallbackModel) => {
+    const cachedModel = cachedBySlug.get(fallbackModel.slug);
+    if (!cachedModel) {
+      return fallbackModel;
+    }
+    return {
+      ...fallbackModel,
+      billingMultiplier: fallbackModel.billingMultiplier ?? cachedModel.billingMultiplier,
+      maxContextWindowTokens:
+        fallbackModel.maxContextWindowTokens ?? cachedModel.maxContextWindowTokens,
+      capabilities: fallbackModel.capabilities ?? cachedModel.capabilities,
+    };
+  });
 };
 
 export const orderProviderSnapshots = (
@@ -35,34 +62,20 @@ export const hydrateCachedProvider = (input: {
     return input.fallbackProvider;
   }
 
-  const mergedModels = (() => {
-    const modelsBySlug = new Map<string, ServerProvider["models"][number]>();
-    for (const model of input.fallbackProvider.models) {
-      modelsBySlug.set(model.slug, model);
-    }
-    for (const model of input.cachedProvider.models) {
-      if (model.isCustom && !modelsBySlug.has(model.slug)) {
-        continue;
-      }
-      modelsBySlug.set(model.slug, model);
-    }
-    return [...modelsBySlug.values()];
-  })();
-
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
+    models: mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models),
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,
     auth: input.cachedProvider.auth,
     checkedAt: input.cachedProvider.checkedAt,
-    ...(input.cachedProvider.quotaSnapshots !== undefined
-      ? { quotaSnapshots: input.cachedProvider.quotaSnapshots }
-      : {}),
-    models: mergedModels,
     slashCommands: input.cachedProvider.slashCommands,
     skills: input.cachedProvider.skills,
+    ...(input.cachedProvider.quotaSnapshots
+      ? { quotaSnapshots: input.cachedProvider.quotaSnapshots }
+      : {}),
   };
 
   return input.cachedProvider.message
@@ -101,25 +114,60 @@ export const readProviderStatusCache = (filePath: string) =>
     );
   });
 
+const parseCheckedAt = (value: string): number => {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.NaN;
+};
+
+const isStaleCacheWrite = (input: {
+  readonly current: ServerProvider | undefined;
+  readonly next: ServerProvider;
+}): boolean => {
+  if (!input.current || input.current.provider !== input.next.provider) {
+    return false;
+  }
+  const currentCheckedAt = parseCheckedAt(input.current.checkedAt);
+  const nextCheckedAt = parseCheckedAt(input.next.checkedAt);
+  if (!Number.isFinite(currentCheckedAt) || !Number.isFinite(nextCheckedAt)) {
+    return false;
+  }
+  return currentCheckedAt > nextCheckedAt;
+};
+
+const getCacheWriteSemaphore = (filePath: string): Semaphore.Semaphore => {
+  const existing = cacheWriteSemaphoreByPath.get(filePath);
+  if (existing) {
+    return existing;
+  }
+  const semaphore = Effect.runSync(Semaphore.make(1));
+  cacheWriteSemaphoreByPath.set(filePath, semaphore);
+  return semaphore;
+};
+
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
-}) => {
-  const tempPath = `${input.filePath}.${process.pid}.${Date.now()}.tmp`;
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const encoded = `${JSON.stringify(input.provider, null, 2)}\n`;
+}) =>
+  getCacheWriteSemaphore(input.filePath).withPermits(1)(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const currentProvider = yield* readProviderStatusCache(input.filePath).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+      );
+      if (isStaleCacheWrite({ current: currentProvider, next: input.provider })) {
+        return;
+      }
 
-    yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
-    yield* fs.writeFileString(tempPath, encoded);
-    yield* fs.rename(tempPath, input.filePath);
-  }).pipe(
-    Effect.ensuring(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }));
-      }),
-    ),
+      const tempPath = `${input.filePath}.${process.pid}.${Date.now()}.tmp`;
+      const encoded = `${JSON.stringify(input.provider, null, 2)}\n`;
+
+      yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
+      yield* fs.writeFileString(tempPath, encoded);
+      yield* fs
+        .rename(tempPath, input.filePath)
+        .pipe(
+          Effect.ensuring(fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }))),
+        );
+    }),
   );
-};

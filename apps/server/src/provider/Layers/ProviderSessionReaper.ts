@@ -40,14 +40,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
-        const thread = threadsById.get(binding.threadId);
-        const lastSeenMs = Math.max(
-          ...[binding.lastSeenAt, thread?.latestTurn?.completedAt]
-            .flatMap((value) =>
-              typeof value === "string" && value.length > 0 ? [Date.parse(value)] : [],
-            )
-            .filter(Number.isFinite),
-        );
+        const lastSeenMs = Date.parse(binding.lastSeenAt);
         if (Number.isNaN(lastSeenMs)) {
           yield* Effect.logWarning("provider.session.reaper.invalid-last-seen", {
             threadId: binding.threadId,
@@ -62,31 +55,12 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
           continue;
         }
 
+        const thread = threadsById.get(binding.threadId);
         if (thread?.session?.activeTurnId != null) {
           yield* Effect.logDebug("provider.session.reaper.skipped-active-turn", {
             threadId: binding.threadId,
             activeTurnId: thread.session.activeTurnId,
             idleDurationMs,
-          });
-          continue;
-        }
-
-        const currentBinding = (yield* directory.listBindings()).find(
-          (candidate) => candidate.threadId === binding.threadId,
-        );
-        if (
-          !currentBinding ||
-          currentBinding.provider !== binding.provider ||
-          currentBinding.lastSeenAt !== binding.lastSeenAt ||
-          currentBinding.status === "stopped"
-        ) {
-          yield* Effect.logDebug("provider.session.reaper.skipped-updated-binding", {
-            threadId: binding.threadId,
-            provider: binding.provider,
-            lastSeenAt: binding.lastSeenAt,
-            currentProvider: currentBinding?.provider ?? null,
-            currentLastSeenAt: currentBinding?.lastSeenAt ?? null,
-            currentStatus: currentBinding?.status ?? null,
           });
           continue;
         }

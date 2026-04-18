@@ -5,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { Schema } from "effect";
 import { deepMerge } from "./Struct.ts";
+import { createModelSelection } from "./model.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
@@ -65,66 +66,16 @@ export function applyServerSettingsPatch(
     return next;
   }
 
-  const currentProvider = current.textGenerationModelSelection.provider;
-  const provider = selectionPatch.provider ?? currentProvider;
+  const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
   const model =
     selectionPatch.model ??
-    (selectionPatch.provider !== undefined && selectionPatch.provider !== currentProvider
+    (selectionPatch.provider !== undefined &&
+    selectionPatch.provider !== current.textGenerationModelSelection.provider
       ? DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER[provider]
       : current.textGenerationModelSelection.model);
-  if (provider === "codex") {
-    const textGenerationModelSelection = selectionPatch.options
-      ? ({
-          provider: "codex",
-          model,
-          options: selectionPatch.options as Extract<
-            ServerSettings["textGenerationModelSelection"],
-            { provider: "codex" }
-          >["options"],
-        } as Extract<ServerSettings["textGenerationModelSelection"], { provider: "codex" }>)
-      : ({ provider: "codex", model } as Extract<
-          ServerSettings["textGenerationModelSelection"],
-          { provider: "codex" }
-        >);
-    return {
-      ...next,
-      textGenerationModelSelection,
-    };
-  }
-  if (provider === "copilot") {
-    const textGenerationModelSelection = selectionPatch.options
-      ? ({
-          provider: "copilot",
-          model,
-          options: selectionPatch.options as Extract<
-            ServerSettings["textGenerationModelSelection"],
-            { provider: "copilot" }
-          >["options"],
-        } as Extract<ServerSettings["textGenerationModelSelection"], { provider: "copilot" }>)
-      : ({ provider: "copilot", model } as Extract<
-          ServerSettings["textGenerationModelSelection"],
-          { provider: "copilot" }
-        >);
-    return {
-      ...next,
-      textGenerationModelSelection,
-    };
-  }
-  const textGenerationModelSelection = selectionPatch.options
-    ? ({
-        provider: "claudeAgent",
-        model,
-        options: selectionPatch.options as Extract<
-          ServerSettings["textGenerationModelSelection"],
-          { provider: "claudeAgent" }
-        >["options"],
-      } as Extract<ServerSettings["textGenerationModelSelection"], { provider: "claudeAgent" }>)
-    : ({ provider: "claudeAgent", model } as Extract<
-        ServerSettings["textGenerationModelSelection"],
-        { provider: "claudeAgent" }
-      >);
+
   return {
     ...next,
-    textGenerationModelSelection,
+    textGenerationModelSelection: createModelSelection(provider, model, selectionPatch.options),
   };
 }

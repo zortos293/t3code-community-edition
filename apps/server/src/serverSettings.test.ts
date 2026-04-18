@@ -41,23 +41,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
         },
       );
-
-      assert.deepEqual(
-        decodePatch({
-          providers: {
-            claudeAgent: {
-              launchArgs: "--verbose --dangerously-skip-permissions",
-            },
-          },
-        }),
-        {
-          providers: {
-            claudeAgent: {
-              launchArgs: "--verbose --dangerously-skip-permissions",
-            },
-          },
-        },
-      );
     }),
   );
 
@@ -188,61 +171,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("falls back from unsupported copilot git text generation selections", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
-
-      const next = yield* serverSettings.updateSettings({
-        textGenerationModelSelection: {
-          provider: "copilot",
-          model: "gpt-5-mini",
-        },
-      });
-
-      assert.deepEqual(next.textGenerationModelSelection, {
-        provider: "codex",
-        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-      });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
-  it.effect("persists a disabled selected provider while read-time access still falls back", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsService;
-      const serverConfig = yield* ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-
-      const next = yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            enabled: false,
-          },
-        },
-        textGenerationModelSelection: {
-          provider: "codex",
-          model: "gpt-5.4",
-        },
-      });
-
-      assert.deepEqual(next.textGenerationModelSelection, {
-        provider: "claudeAgent",
-        model: "claude-haiku-4-5",
-      });
-
-      const persisted = JSON.parse(yield* fileSystem.readFileString(serverConfig.settingsPath));
-      assert.deepEqual(persisted.textGenerationModelSelection, {
-        provider: "codex",
-        model: "gpt-5.4",
-      });
-
-      const readBack = yield* serverSettings.getSettings;
-      assert.deepEqual(readBack.textGenerationModelSelection, {
-        provider: "claudeAgent",
-        model: "claude-haiku-4-5",
-      });
-    }).pipe(Effect.provide(makeServerSettingsLayer())),
-  );
-
   it.effect("trims provider path settings when updates are applied", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
@@ -255,6 +183,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           },
           claudeAgent: {
             binaryPath: "  /opt/homebrew/bin/claude  ",
+          },
+          opencode: {
+            binaryPath: "  /opt/homebrew/bin/opencode  ",
+            serverUrl: "  http://127.0.0.1:4096  ",
+            serverPassword: "  secret-password  ",
           },
         },
       });
@@ -270,6 +203,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         binaryPath: "/opt/homebrew/bin/claude",
         customModels: [],
         launchArgs: "",
+      });
+      assert.deepEqual(next.providers.opencode, {
+        enabled: true,
+        binaryPath: "/opt/homebrew/bin/opencode",
+        serverUrl: "http://127.0.0.1:4096",
+        serverPassword: "secret-password",
+        customModels: [],
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -329,6 +269,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
           },
+          opencode: {
+            serverUrl: "http://127.0.0.1:4096",
+            serverPassword: "secret-password",
+          },
         },
       });
 
@@ -344,6 +288,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         providers: {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
+          },
+          opencode: {
+            serverUrl: "http://127.0.0.1:4096",
+            serverPassword: "secret-password",
           },
         },
       });

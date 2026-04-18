@@ -326,6 +326,75 @@ it.effect("CopilotAdapterLive MCP config loading", () =>
   ),
 );
 
+const startupFailureSession = new FakeCopilotSession("copilot-session-startup-failure");
+const startupFailureClient = new FakeCopilotClient(startupFailureSession);
+const startupFailureLayer = it.layer(
+  makeCopilotAdapterLive({
+    clientFactory: () => startupFailureClient,
+  }).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+startupFailureLayer("CopilotAdapterLive startup cleanup", (it) => {
+  it.effect("stops the Copilot client when validation fails", () =>
+    Effect.gen(function* () {
+      startupFailureClient.startImpl.mockClear();
+      startupFailureClient.listModelsImpl.mockReset();
+      startupFailureClient.stopImpl.mockClear();
+      startupFailureClient.listModelsImpl.mockResolvedValue([
+        {
+          id: "gpt-5",
+          name: "GPT-5",
+          capabilities: {} as ModelInfo["capabilities"],
+          supportedReasoningEfforts: ["low"],
+        },
+      ]);
+
+      const adapter = yield* CopilotAdapter;
+      const exit = yield* adapter
+        .startSession({
+          provider: "copilot",
+          threadId: asThreadId("thread-validation-failure"),
+          runtimeMode: "full-access",
+          modelSelection: {
+            provider: "copilot",
+            model: "gpt-5",
+            options: { reasoningEffort: "xhigh" },
+          },
+        })
+        .pipe(Effect.exit);
+
+      assert.equal(exit._tag, "Failure");
+      assert.equal(startupFailureClient.stopImpl.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("stops the Copilot client when session creation fails", () =>
+    Effect.gen(function* () {
+      startupFailureClient.listModelsImpl.mockReset();
+      startupFailureClient.createSessionImpl.mockReset();
+      startupFailureClient.stopImpl.mockClear();
+      startupFailureClient.listModelsImpl.mockResolvedValue([]);
+      startupFailureClient.createSessionImpl.mockRejectedValue(new Error("boom"));
+
+      const adapter = yield* CopilotAdapter;
+      const exit = yield* adapter
+        .startSession({
+          provider: "copilot",
+          threadId: asThreadId("thread-create-failure"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.exit);
+
+      assert.equal(exit._tag, "Failure");
+      assert.equal(startupFailureClient.stopImpl.mock.calls.length, 1);
+    }),
+  );
+});
+
 afterAll(() => {
   void modeSession.destroy();
   void modeClient.stop();
@@ -333,4 +402,6 @@ afterAll(() => {
   void planClient.stop();
   void mcpSession.destroy();
   void mcpClient.stop();
+  void startupFailureSession.destroy();
+  void startupFailureClient.stop();
 });

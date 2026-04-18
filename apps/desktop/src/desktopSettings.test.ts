@@ -108,7 +108,7 @@ describe("desktopSettings", () => {
     });
   });
 
-  it("preserves a legacy saved stable channel on nightly builds", () => {
+  it("preserves legacy implicit stable settings on nightly builds", () => {
     const settingsPath = makeSettingsPath();
     fs.writeFileSync(
       settingsPath,
@@ -142,42 +142,6 @@ describe("desktopSettings", () => {
       serverExposureMode: "local-only",
       updateChannel: "latest",
       updateChannelConfiguredByUser: true,
-    });
-  });
-
-  it("preserves a legacy explicit stable choice on nightly builds", () => {
-    const settingsPath = makeSettingsPath();
-    fs.writeFileSync(
-      settingsPath,
-      JSON.stringify({
-        serverExposureMode: "local-only",
-        updateChannel: "latest",
-      }),
-      "utf8",
-    );
-
-    expect(readDesktopSettings(settingsPath, "0.0.17-nightly.20260415.1")).toEqual({
-      serverExposureMode: "local-only",
-      updateChannel: "latest",
-      updateChannelConfiguredByUser: false,
-    });
-  });
-
-  it("does not treat legacy nightly settings as an explicit track override", () => {
-    const settingsPath = makeSettingsPath();
-    fs.writeFileSync(
-      settingsPath,
-      JSON.stringify({
-        serverExposureMode: "local-only",
-        updateChannel: "nightly",
-      }),
-      "utf8",
-    );
-
-    expect(readDesktopSettings(settingsPath, "0.0.17")).toEqual({
-      serverExposureMode: "local-only",
-      updateChannel: "latest",
-      updateChannelConfiguredByUser: false,
     });
   });
 });

@@ -1,10 +1,15 @@
 import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  GIT_TEXT_GENERATION_PROVIDERS,
   type ModelSelection,
   type ProviderKind,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { normalizeModelSlug, resolveSelectableModel } from "@t3tools/shared/model";
+import {
+  createModelSelection,
+  normalizeModelSlug,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
@@ -12,7 +17,6 @@ import {
   getProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
-import { createModelSelection } from "./modelSelectionUtils";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
@@ -52,6 +56,20 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     description: "Save additional Claude model slugs for the picker and `/model` command.",
     placeholder: "your-claude-model-slug",
     example: "claude-sonnet-5-0",
+  },
+  cursor: {
+    provider: "cursor",
+    title: "Cursor",
+    description: "Save additional Cursor model slugs for the picker and `/model` command.",
+    placeholder: "your-cursor-model-slug",
+    example: "claude-sonnet-4-6",
+  },
+  opencode: {
+    provider: "opencode",
+    title: "OpenCode",
+    description: "Save additional OpenCode model slugs in `provider/model` format.",
+    placeholder: "openai/gpt-5",
+    example: "anthropic/claude-sonnet-4-5-20250929",
   },
 };
 
@@ -179,25 +197,19 @@ export function getCustomModelOptionsByProvider(
       "claudeAgent",
       selectedProvider === "claudeAgent" ? selectedModel : undefined,
     ),
+    cursor: getAppModelOptions(
+      settings,
+      providers,
+      "cursor",
+      selectedProvider === "cursor" ? selectedModel : undefined,
+    ),
+    opencode: getAppModelOptions(
+      settings,
+      providers,
+      "opencode",
+      selectedProvider === "opencode" ? selectedModel : undefined,
+    ),
   };
-}
-
-function resolveAllowedProvider(
-  providers: ReadonlyArray<ServerProvider>,
-  requestedProvider: ProviderKind,
-  allowedProviders?: ReadonlyArray<ProviderKind>,
-): ProviderKind {
-  if (!allowedProviders || allowedProviders.includes(requestedProvider)) {
-    return resolveSelectableProvider(providers, requestedProvider);
-  }
-
-  const firstAllowedEnabled = allowedProviders.find(
-    (provider) => providers.find((candidate) => candidate.provider === provider)?.enabled ?? true,
-  );
-  return resolveSelectableProvider(
-    providers,
-    firstAllowedEnabled ?? allowedProviders[0] ?? requestedProvider,
-  );
 }
 
 export function resolveAppModelSelectionState(
@@ -209,11 +221,20 @@ export function resolveAppModelSelectionState(
     provider: "codex" as const,
     model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
   };
-  const provider = resolveAllowedProvider(providers, selection.provider, allowedProviders);
+  const resolvedRequestedProvider =
+    allowedProviders && !allowedProviders.includes(selection.provider)
+      ? (allowedProviders.find(
+          (provider) =>
+            providers.find((candidate) => candidate.provider === provider)?.enabled ?? true,
+        ) ??
+        allowedProviders[0] ??
+        GIT_TEXT_GENERATION_PROVIDERS[0])
+      : selection.provider;
+  const provider = resolveSelectableProvider(providers, resolvedRequestedProvider);
 
   // When the provider changed due to fallback (e.g. selected provider was disabled),
   // don't carry over the old provider's model — use the fallback provider's default.
-  const selectedModel = provider === selection.provider ? selection.model : null;
+  const selectedModel = provider === resolvedRequestedProvider ? selection.model : null;
   const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
   const { modelOptionsForDispatch } = getComposerProviderState({
     provider,
@@ -221,13 +242,9 @@ export function resolveAppModelSelectionState(
     models: getProviderModels(providers, provider),
     prompt: "",
     modelOptions: {
-      [provider]: provider === selection.provider ? selection.options : undefined,
+      [provider]: provider === resolvedRequestedProvider ? selection.options : undefined,
     },
   });
 
-  return createModelSelection({
-    provider,
-    model,
-    ...(modelOptionsForDispatch !== undefined ? { options: modelOptionsForDispatch } : {}),
-  });
+  return createModelSelection(provider, model, modelOptionsForDispatch);
 }

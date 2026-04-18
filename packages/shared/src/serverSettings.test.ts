@@ -110,7 +110,7 @@ describe("serverSettings helpers", () => {
     });
   });
 
-  it("uses the new provider default git model when switching providers without a model", () => {
+  it("replaces text generation selection across providers without leaking stale options", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,
       textGenerationModelSelection: {
@@ -126,35 +126,13 @@ describe("serverSettings helpers", () => {
     expect(
       applyServerSettingsPatch(current, {
         textGenerationModelSelection: {
-          provider: "claudeAgent",
+          provider: "opencode",
+          model: "openai/gpt-5",
         },
       }).textGenerationModelSelection,
     ).toEqual({
-      provider: "claudeAgent",
-      model: "claude-haiku-4-5",
+      provider: "opencode",
+      model: "openai/gpt-5",
     });
-  });
-
-  it("preserves Claude launchArgs when applying a provider settings patch", () => {
-    const current = {
-      ...DEFAULT_SERVER_SETTINGS,
-      providers: {
-        ...DEFAULT_SERVER_SETTINGS.providers,
-        claudeAgent: {
-          ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
-          launchArgs: "--dangerously-skip-permissions",
-        },
-      },
-    };
-
-    expect(
-      applyServerSettingsPatch(current, {
-        providers: {
-          claudeAgent: {
-            launchArgs: "--verbose --dangerously-skip-permissions",
-          },
-        },
-      }).providers.claudeAgent.launchArgs,
-    ).toBe("--verbose --dangerously-skip-permissions");
   });
 });

@@ -148,9 +148,7 @@ export function buildServerProvider(input: {
     checkedAt: input.checkedAt,
     ...(input.probe.message ? { message: input.probe.message } : {}),
     models: input.models,
-    ...(input.probe.quotaSnapshots !== undefined
-      ? { quotaSnapshots: [...input.probe.quotaSnapshots] }
-      : {}),
+    ...(input.probe.quotaSnapshots ? { quotaSnapshots: [...input.probe.quotaSnapshots] } : {}),
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
   };

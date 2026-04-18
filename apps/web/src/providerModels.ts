@@ -5,7 +5,10 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  normalizeModelSlug,
+  normalizeProviderModelOptionsWithCapabilities,
+} from "@t3tools/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [],
@@ -33,7 +36,10 @@ export function isProviderEnabled(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind,
 ): boolean {
-  return getProviderSnapshot(providers, provider)?.enabled ?? true;
+  if (providers.length === 0) {
+    return true;
+  }
+  return getProviderSnapshot(providers, provider)?.enabled ?? false;
 }
 
 export function resolveSelectableProvider(
@@ -67,3 +73,5 @@ export function getDefaultServerModel(
     DEFAULT_MODEL_BY_PROVIDER[provider]
   );
 }
+
+export { normalizeProviderModelOptionsWithCapabilities };

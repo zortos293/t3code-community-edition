@@ -8,23 +8,12 @@
  */
 import { Context } from "effect";
 import type { Effect } from "effect";
-import {
-  GIT_TEXT_GENERATION_PROVIDERS,
-  type ChatAttachment,
-  type ModelSelection,
-  type ProviderKind,
-} from "@t3tools/contracts";
+import type { ChatAttachment, ModelSelection } from "@t3tools/contracts";
 
 import type { TextGenerationError } from "@t3tools/contracts";
 
 /** Providers that support git text generation (commit messages, PR content, branch names). */
-export type TextGenerationProvider = (typeof GIT_TEXT_GENERATION_PROVIDERS)[number];
-
-export function isTextGenerationProvider(
-  provider: ProviderKind | undefined,
-): provider is TextGenerationProvider {
-  return provider === "codex" || provider === "claudeAgent";
-}
+export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "opencode";
 
 export interface CommitMessageGenerationInput {
   cwd: string;

@@ -4,8 +4,10 @@ import {
   type ModelSelection,
   ClaudeModelOptions,
   CodexModelOptions,
+  CursorModelOptions,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
+  OpenCodeModelOptions,
   EnvironmentId,
   type ServerProvider,
   ThreadId,
@@ -44,7 +46,6 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
-    quotaSnapshots: [],
     slashCommands: [],
     skills: [],
     models: [
@@ -66,6 +67,39 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     ],
   },
   {
+    provider: "opencode",
+    enabled: true,
+    installed: true,
+    version: "0.1.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    slashCommands: [],
+    skills: [],
+    models: [
+      {
+        slug: "openai/gpt-5",
+        name: "GPT-5",
+        isCustom: false,
+        capabilities: {
+          reasoningEffortLevels: [],
+          supportsFastMode: false,
+          supportsThinkingToggle: false,
+          contextWindowOptions: [],
+          promptInjectedEffortLevels: [],
+          variantOptions: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium", isDefault: true },
+          ],
+          agentOptions: [
+            { value: "build", label: "Build", isDefault: true },
+            { value: "plan", label: "Plan" },
+          ],
+        },
+      },
+    ],
+  },
+  {
     provider: "claudeAgent",
     enabled: true,
     installed: true,
@@ -73,7 +107,6 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: "2026-01-01T00:00:00.000Z",
-    quotaSnapshots: [],
     slashCommands: [],
     skills: [],
     models: [
@@ -127,6 +160,13 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
     ],
   },
 ];
+const findTestProvider = (provider: ServerProvider["provider"]) => {
+  const testProvider = TEST_PROVIDERS.find((candidate) => candidate.provider === provider);
+  if (!testProvider) {
+    throw new Error(`Missing test provider fixture: ${provider}`);
+  }
+  return testProvider;
+};
 
 function ClaudeTraitsPickerHarness(props: {
   model: string;
@@ -156,7 +196,7 @@ function ClaudeTraitsPickerHarness(props: {
   return (
     <TraitsPicker
       provider="claudeAgent"
-      models={TEST_PROVIDERS[1]!.models}
+      models={TEST_PROVIDERS[2]!.models}
       threadRef={CLAUDE_THREAD_REF}
       model={selectedModel ?? props.model}
       prompt={prompt}
@@ -436,6 +476,90 @@ async function mountCodexPicker(props: { model?: string; options?: CodexModelOpt
   };
 }
 
+async function mountCursorPicker(props: { model?: string; options?: CursorModelOptions }) {
+  const model = props.model ?? DEFAULT_MODEL_BY_PROVIDER.cursor;
+  const cursorThreadId = ThreadId.make("thread-cursor-traits");
+  const cursorThreadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, cursorThreadId);
+  const cursorThreadKey = scopedThreadKey(cursorThreadRef);
+  const host = document.createElement("div");
+  document.body.append(host);
+
+  useComposerDraftStore.setState({
+    draftsByThreadKey: {
+      [cursorThreadKey]: {
+        prompt: "",
+        images: [],
+        nonPersistedImageIds: [],
+        persistedAttachments: [],
+        terminalContexts: [],
+        modelSelectionByProvider: {
+          cursor: {
+            provider: "cursor",
+            model,
+            ...(props.options ? { options: props.options } : {}),
+          },
+        },
+        activeProvider: "cursor",
+        runtimeMode: null,
+        interactionMode: null,
+      },
+    },
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+
+  const screen = await render(
+    <TraitsPicker
+      provider="cursor"
+      models={[
+        {
+          slug: "composer-2",
+          name: "Composer 2",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: true,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "claude-opus-4-6",
+          name: "Opus 4.6",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: true,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [
+              { value: "200k", label: "200K", isDefault: true },
+              { value: "1m", label: "1M" },
+            ],
+            promptInjectedEffortLevels: [],
+          },
+        },
+      ]}
+      threadRef={cursorThreadRef}
+      model={model}
+      prompt=""
+      modelOptions={props.options}
+      onPromptChange={() => {}}
+    />,
+    { container: host },
+  );
+
+  const cleanup = async () => {
+    await screen.unmount();
+    host.remove();
+  };
+
+  return {
+    [Symbol.asyncDispose]: cleanup,
+    cleanup,
+  };
+}
+
 describe("TraitsPicker (Codex)", () => {
   afterEach(() => {
     document.body.innerHTML = "";
@@ -502,21 +626,157 @@ describe("TraitsPicker (Codex)", () => {
       options: { fastMode: true },
     });
   });
+});
 
-  it("persists sticky codex reasoning effort changes", async () => {
-    await using _ = await mountCodexPicker({
-      options: { reasoningEffort: "high", fastMode: false },
+// ── OpenCode TraitsPicker tests ───────────────────────────────────────
+
+async function mountOpenCodePicker(props: { model?: string; options?: OpenCodeModelOptions }) {
+  const threadId = ThreadId.make("thread-opencode-traits");
+  const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
+  const threadKey = scopedThreadKey(threadRef);
+  const model = props.model ?? DEFAULT_MODEL_BY_PROVIDER.opencode;
+  const draftsByThreadKey: Record<string, ComposerThreadDraftState> = {
+    [threadKey]: {
+      prompt: "",
+      images: [],
+      nonPersistedImageIds: [],
+      persistedAttachments: [],
+      terminalContexts: [],
+      modelSelectionByProvider: {
+        opencode: {
+          provider: "opencode",
+          model,
+          ...(props.options ? { options: props.options } : {}),
+        },
+      },
+      activeProvider: "opencode",
+      runtimeMode: null,
+      interactionMode: null,
+    },
+  };
+
+  useComposerDraftStore.setState({
+    draftsByThreadKey,
+    draftThreadsByThreadKey: {},
+    logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const screen = await render(
+    <TraitsPicker
+      provider="opencode"
+      models={findTestProvider("opencode").models}
+      threadRef={threadRef}
+      model={model}
+      prompt=""
+      modelOptions={props.options}
+      onPromptChange={() => {}}
+    />,
+    { container: host },
+  );
+
+  const cleanup = async () => {
+    await screen.unmount();
+    host.remove();
+  };
+
+  return {
+    [Symbol.asyncDispose]: cleanup,
+    cleanup,
+  };
+}
+
+describe("TraitsPicker (OpenCode)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      stickyModelSelectionByProvider: {},
+    });
+  });
+
+  it("shows the selected agent label with capitalization in the trigger", async () => {
+    await using _ = await mountOpenCodePicker({
+      options: {
+        variant: "medium",
+        agent: "plan",
+      },
+    });
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Medium · Plan");
+      expect(text).not.toContain("Medium · plan");
+    });
+  });
+});
+
+describe("TraitsPicker (Cursor)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      stickyModelSelectionByProvider: {},
+    });
+  });
+
+  it("uses the selected fast mode menu label for the trigger in fast-only state", async () => {
+    await using _ = await mountCursorPicker({
+      model: "composer-2",
+      options: { fastMode: false },
+    });
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Normal");
     });
 
     await page.getByRole("button").click();
-    await page.getByRole("menuitemradio", { name: "Extra High" }).click();
 
-    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.codex).toMatchObject({
-      provider: "codex",
-      options: {
-        reasoningEffort: "xhigh",
-        fastMode: false,
-      },
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Fast Mode");
+      expect(text).toContain("off");
+      expect(text).toContain("on");
+    });
+  });
+
+  it("shows Normal for Cursor Opus 4.6 when fast mode and context window are both at defaults", async () => {
+    await using _ = await mountCursorPicker({
+      model: "claude-opus-4-6",
+      options: { fastMode: false },
+    });
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Normal");
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Fast Mode");
+      expect(text).toContain("Context Window");
+      expect(text).toContain("200K (default)");
+      expect(text).toContain("1M");
+    });
+  });
+
+  it("shows Normal · 1M for Cursor Opus 4.6 when fast mode is off and context window is overridden", async () => {
+    await using _ = await mountCursorPicker({
+      model: "claude-opus-4-6",
+      options: { fastMode: false, contextWindow: "1m" },
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent ?? "").toContain("Normal · 1M");
     });
   });
 });

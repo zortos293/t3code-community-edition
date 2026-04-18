@@ -562,15 +562,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                               thread.session !== null && thread.session.status !== "stopped",
                           }),
                         ),
-                        Effect.catchCause((cause) =>
-                          Effect.logWarning(
-                            "failed to inspect thread session before archive; stopping session defensively",
-                            {
-                              threadId: normalizedCommand.threadId,
-                              cause,
-                            },
-                          ).pipe(Effect.as(true)),
-                        ),
+                        Effect.catch(() => Effect.succeed(true)),
                       )
                   : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand);
@@ -992,7 +984,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               );
 
               yield* Effect.all(
-                [providerRegistry.refresh("codex"), providerRegistry.refresh("claudeAgent")],
+                [
+                  providerRegistry.refresh("codex"),
+                  providerRegistry.refresh("copilot"),
+                  providerRegistry.refresh("claudeAgent"),
+                  providerRegistry.refresh("opencode"),
+                  providerRegistry.refresh("cursor"),
+                ],
                 {
                   concurrency: "unbounded",
                   discard: true,

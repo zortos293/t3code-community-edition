@@ -148,10 +148,6 @@ export function useNewThreadHandler() {
 
 export function useHandleNewThread() {
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const projectGroupingSettings = useSettings((settings) => ({
-    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
-    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
-  }));
   const routeTarget = useParams({
     strict: false,
     select: (params) => resolveThreadRouteTarget(params),
@@ -173,9 +169,9 @@ export function useHandleNewThread() {
     return orderItemsByPreferredIds({
       items: projects,
       preferredIds: projectOrder,
-      getId: (project) => deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+      getId: (project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
     });
-  }, [projectGroupingSettings, projectOrder, projects]);
+  }, [projectOrder, projects]);
   const handleNewThread = useNewThreadState();
 
   return {

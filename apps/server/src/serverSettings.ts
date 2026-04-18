@@ -79,7 +79,7 @@ export class ServerSettingsService extends Context.Service<
         return {
           start: Effect.void,
           ready: Effect.void,
-          getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
+          getSettings: Ref.get(currentSettingsRef),
           updateSettings: (patch) =>
             Ref.get(currentSettingsRef).pipe(
               Effect.flatMap((currentSettings) =>
@@ -97,7 +97,6 @@ export class ServerSettingsService extends Context.Service<
                 ),
               ),
               Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-              Effect.map(resolveTextGenerationProvider),
             ),
           streamChanges: Stream.empty,
         } satisfies ServerSettingsShape;
@@ -107,7 +106,13 @@ export class ServerSettingsService extends Context.Service<
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
 
-const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "copilot", "claudeAgent"];
+const PROVIDER_ORDER: readonly ProviderKind[] = [
+  "codex",
+  "copilot",
+  "claudeAgent",
+  "opencode",
+  "cursor",
+];
 
 /**
  * Ensure the `textGenerationModelSelection` points to an enabled provider.
@@ -117,18 +122,18 @@ const PROVIDER_ORDER: readonly ProviderKind[] = ["codex", "copilot", "claudeAgen
  */
 function resolveTextGenerationProvider(settings: ServerSettings): ServerSettings {
   const selection = settings.textGenerationModelSelection;
-  if (selection.provider === "codex" || selection.provider === "claudeAgent") {
-    if (settings.providers[selection.provider].enabled) {
-      return settings;
-    }
+  if (settings.providers[selection.provider].enabled) {
+    return settings;
   }
 
   const fallback = PROVIDER_ORDER.find(
     (provider): provider is (typeof GIT_TEXT_GENERATION_PROVIDERS)[number] =>
-      (provider === "codex" || provider === "claudeAgent") && settings.providers[provider].enabled,
+      GIT_TEXT_GENERATION_PROVIDERS.includes(
+        provider as (typeof GIT_TEXT_GENERATION_PROVIDERS)[number],
+      ) && settings.providers[provider].enabled,
   );
   if (!fallback) {
-    // No supported providers enabled — return as-is; callers will report the error.
+    // No providers enabled — return as-is; callers will report the error.
     return settings;
   }
 
@@ -347,11 +352,10 @@ const makeServerSettings = Effect.gen(function* () {
                 }),
             ),
           );
-          const resolvedNext = resolveTextGenerationProvider(next);
           yield* writeSettingsAtomically(next);
           yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(resolvedNext);
-          return resolvedNext;
+          yield* emitChange(next);
+          return resolveTextGenerationProvider(next);
         }),
       ),
     get streamChanges() {

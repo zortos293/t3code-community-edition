@@ -252,25 +252,6 @@ interface MarkdownFileLinkProps {
 }
 
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
-const STANDALONE_FILE_URL_PATTERN = /\bfile:\/\/\/[^\s<>()]+/gi;
-const STANDALONE_FILE_URL_TRAILING_PUNCTUATION_PATTERN = /[.,!?;:]+$/;
-
-function splitStandaloneFileUrlCandidate(value: string): { href: string; trailingText: string } {
-  if (value.length === 0) {
-    return { href: value, trailingText: "" };
-  }
-
-  const trailingPunctuationMatch = value.match(STANDALONE_FILE_URL_TRAILING_PUNCTUATION_PATTERN);
-  const trailingText = trailingPunctuationMatch?.[0] ?? "";
-  if (!trailingText) {
-    return { href: value, trailingText: "" };
-  }
-
-  return {
-    href: value.slice(0, value.length - trailingText.length),
-    trailingText,
-  };
-}
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
 const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
@@ -346,129 +327,8 @@ function extractMarkdownLinkHrefs(text: string): string[] {
   return hrefs;
 }
 
-function extractStandaloneFileUrlHrefs(text: string): string[] {
-  const hrefs: string[] = [];
-  for (const match of text.matchAll(STANDALONE_FILE_URL_PATTERN)) {
-    const href = match[0]?.trim();
-    if (!href) continue;
-    const candidate = splitStandaloneFileUrlCandidate(href);
-    if (!candidate.href) continue;
-    hrefs.push(candidate.href);
-  }
-  return hrefs;
-}
-
 function normalizeMarkdownLinkHrefKey(href: string): string {
   return rewriteMarkdownFileUriHref(href.trim()) ?? href.trim();
-}
-
-function remarkStandaloneFileUrls() {
-  return (tree: {
-    children?: Array<{
-      type?: string;
-      value?: string;
-      children?: Array<unknown>;
-    }>;
-  }) => {
-    const visitChildren = (
-      parent: {
-        children?: Array<{
-          type?: string;
-          value?: string;
-          children?: Array<unknown>;
-        }>;
-      } | null,
-    ) => {
-      if (!parent?.children) {
-        return;
-      }
-
-      for (let index = 0; index < parent.children.length; index += 1) {
-        const child = parent.children[index];
-        if (!child || typeof child !== "object") {
-          continue;
-        }
-
-        if (child.type === "text" && typeof child.value === "string") {
-          const matches = [...child.value.matchAll(STANDALONE_FILE_URL_PATTERN)];
-          if (matches.length === 0) {
-            continue;
-          }
-
-          const replacementNodes: Array<Record<string, unknown>> = [];
-          let lastIndex = 0;
-          for (const match of matches) {
-            const href = match[0];
-            const matchIndex = match.index ?? -1;
-            if (!href || matchIndex < lastIndex) {
-              continue;
-            }
-            if (matchIndex > lastIndex) {
-              replacementNodes.push({
-                type: "text",
-                value: child.value.slice(lastIndex, matchIndex),
-              });
-            }
-            const candidate = splitStandaloneFileUrlCandidate(href);
-            if (!candidate.href) {
-              replacementNodes.push({
-                type: "text",
-                value: href,
-              });
-              lastIndex = matchIndex + href.length;
-              continue;
-            }
-            replacementNodes.push({
-              type: "link",
-              url: candidate.href,
-              title: null,
-              children: [{ type: "text", value: candidate.href }],
-            });
-            if (candidate.trailingText.length > 0) {
-              replacementNodes.push({
-                type: "text",
-                value: candidate.trailingText,
-              });
-            }
-            lastIndex = matchIndex + href.length;
-          }
-
-          if (lastIndex < child.value.length) {
-            replacementNodes.push({
-              type: "text",
-              value: child.value.slice(lastIndex),
-            });
-          }
-
-          parent.children.splice(index, 1, ...replacementNodes);
-          index += replacementNodes.length - 1;
-          continue;
-        }
-
-        if (
-          child.type === "link" ||
-          child.type === "linkReference" ||
-          child.type === "definition" ||
-          child.type === "code" ||
-          child.type === "inlineCode"
-        ) {
-          continue;
-        }
-
-        visitChildren(
-          child as {
-            children?: Array<{
-              type?: string;
-              value?: string;
-              children?: Array<unknown>;
-            }>;
-          },
-        );
-      }
-    };
-
-    visitChildren(tree);
-  };
 }
 
 const MarkdownFileLink = memo(function MarkdownFileLink({
@@ -618,10 +478,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
       string,
       NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
     >();
-    for (const href of [
-      ...extractMarkdownLinkHrefs(text),
-      ...extractStandaloneFileUrlHrefs(text),
-    ]) {
+    for (const href of extractMarkdownLinkHrefs(text)) {
       const normalizedHref = normalizeMarkdownLinkHrefKey(href);
       if (metaByHref.has(normalizedHref)) continue;
       const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
@@ -642,10 +499,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
     () => ({
       a({ node: _node, href, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref
-          ? (markdownFileLinkMetaByHref.get(normalizedHref) ??
-            resolveMarkdownFileLinkMeta(normalizedHref, cwd))
-          : null;
+        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
         if (!fileLinkMeta) {
           return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
         }
@@ -697,7 +551,6 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
     }),
     [
       diffThemeName,
-      cwd,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
@@ -708,7 +561,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   return (
     <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkStandaloneFileUrls]}
+        remarkPlugins={[remarkGfm]}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

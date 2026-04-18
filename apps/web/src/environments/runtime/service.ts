@@ -14,6 +14,7 @@ import {
   createKnownEnvironment,
   getKnownEnvironmentWsBaseUrl,
   scopedThreadKey,
+  scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime";
 
@@ -22,7 +23,6 @@ import {
   markPromotedDraftThreadsByRef,
   useComposerDraftStore,
 } from "~/composerDraftStore";
-import { getUnifiedSettingsSnapshot } from "~/hooks/useSettings";
 import { ensureLocalApi } from "~/localApi";
 import { collectActiveTerminalThreadIds } from "~/lib/terminalStateCleanup";
 import { deriveOrchestrationBatchEffects } from "~/orchestrationEventEffects";
@@ -61,7 +61,11 @@ import { useTerminalStateStore } from "~/terminalStateStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { WsTransport } from "../../rpc/wsTransport";
 import { createWsRpcClient, type WsRpcClient } from "../../rpc/wsRpcClient";
-import { deriveLogicalProjectKeyFromSettings } from "../../logicalProject";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+} from "../../logicalProject";
+import { getClientSettingsSnapshot } from "../../hooks/useSettings";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -466,50 +470,19 @@ function coalesceOrchestrationUiEvents(
   return coalesced;
 }
 
-export function buildProjectUiSyncInputs(
-  projects: ReturnType<typeof selectProjectsAcrossEnvironments>,
-) {
-  const projectGroupingSettings = getUnifiedSettingsSnapshot();
-  const logicalProjectInputs = projects.map((project, index) => ({
-    key: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
-    logicalId: deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
-    cwd: project.cwd,
-    incomingIndex: index,
-  }));
-  logicalProjectInputs.sort((left, right) => {
-    const byLogicalId = left.logicalId.localeCompare(right.logicalId);
-    if (byLogicalId !== 0) {
-      return byLogicalId;
-    }
-    const byCwd = left.cwd.localeCompare(right.cwd);
-    if (byCwd !== 0) {
-      return byCwd;
-    }
-    return left.incomingIndex - right.incomingIndex;
-  });
-
-  const inputsByLogicalProjectKey = new Map<
-    string,
-    { key: string; logicalId: string; cwd: string; incomingIndex: number }
-  >();
-  for (const input of logicalProjectInputs) {
-    if (!inputsByLogicalProjectKey.has(input.logicalId)) {
-      inputsByLogicalProjectKey.set(input.logicalId, input);
-    }
-  }
-
-  return [...inputsByLogicalProjectKey.values()]
-    .toSorted((left, right) => left.incomingIndex - right.incomingIndex)
-    .map(({ key, logicalId, cwd }) => ({
-      key,
-      logicalId,
-      cwd,
-    }));
-}
-
 function syncProjectUiFromStore() {
   const projects = selectProjectsAcrossEnvironments(useStore.getState());
-  useUiStateStore.getState().syncProjects(buildProjectUiSyncInputs(projects));
+  const clientSettings = getClientSettingsSnapshot();
+  useUiStateStore.getState().syncProjects(
+    projects.map((project) => ({
+      key: derivePhysicalProjectKey(project),
+      logicalId: deriveLogicalProjectKeyFromSettings(project, {
+        sidebarProjectGroupingMode: clientSettings.sidebarProjectGroupingMode,
+        sidebarProjectGroupingOverrides: clientSettings.sidebarProjectGroupingOverrides,
+      }),
+      cwd: project.cwd,
+    })),
+  );
 }
 
 function syncThreadUiFromStore() {
@@ -577,7 +550,17 @@ function applyRecoveredEventBatch(
   useStore.getState().applyOrchestrationEvents(uiEvents, environmentId);
   if (needsProjectUiSync) {
     const projects = selectProjectsAcrossEnvironments(useStore.getState());
-    useUiStateStore.getState().syncProjects(buildProjectUiSyncInputs(projects));
+    const clientSettings = getClientSettingsSnapshot();
+    useUiStateStore.getState().syncProjects(
+      projects.map((project) => ({
+        key: derivePhysicalProjectKey(project),
+        logicalId: deriveLogicalProjectKeyFromSettings(project, {
+          sidebarProjectGroupingMode: clientSettings.sidebarProjectGroupingMode,
+          sidebarProjectGroupingOverrides: clientSettings.sidebarProjectGroupingOverrides,
+        }),
+        cwd: project.cwd,
+      })),
+    );
   }
 
   const needsThreadUiSync = events.some(
@@ -602,6 +585,11 @@ function applyRecoveredEventBatch(
     useUiStateStore
       .getState()
       .clearThreadUi(scopedThreadKey(scopeThreadRef(environmentId, threadId)));
+  }
+  for (const event of events) {
+    if (event.type === "project.deleted") {
+      draftStore.clearProjectDraftThreadId(scopeProjectRef(environmentId, event.payload.projectId));
+    }
   }
   for (const threadId of batchEffects.removeTerminalStateThreadIds) {
     useTerminalStateStore.getState().removeTerminalState(scopeThreadRef(environmentId, threadId));

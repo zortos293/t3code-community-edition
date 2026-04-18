@@ -68,6 +68,54 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.modelSelection.options?.fastMode).toBe(true);
     expect(parsed.runtimeMode).toBe("full-access");
   });
+
+  it("accepts cursor provider", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      provider: "cursor",
+      cwd: "/tmp/workspace",
+      runtimeMode: "full-access",
+      modelSelection: {
+        provider: "cursor",
+        model: "composer-2",
+        options: { fastMode: true },
+      },
+    });
+    expect(parsed.provider).toBe("cursor");
+    expect(parsed.modelSelection?.provider).toBe("cursor");
+    expect(parsed.modelSelection?.model).toBe("composer-2");
+    if (parsed.modelSelection?.provider === "cursor") {
+      expect(parsed.modelSelection.options?.fastMode).toBe(true);
+    }
+  });
+
+  it("derives provider from modelSelection when provider is omitted", () => {
+    const parsed = decodeProviderSessionStartInput({
+      threadId: "thread-1",
+      runtimeMode: "full-access",
+      modelSelection: {
+        provider: "copilot",
+        model: "gpt-5",
+      },
+    });
+
+    expect(parsed.provider).toBe("copilot");
+    expect(parsed.modelSelection?.provider).toBe("copilot");
+  });
+
+  it("rejects mismatched provider and modelSelection providers", () => {
+    expect(() =>
+      decodeProviderSessionStartInput({
+        threadId: "thread-1",
+        provider: "codex",
+        runtimeMode: "full-access",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-6",
+        },
+      }),
+    ).toThrow(/must match modelSelection provider/i);
+  });
 });
 
 describe("ProviderSendTurnInput", () => {

@@ -1,4 +1,4 @@
-import {
+import type {
   EnvironmentId,
   MessageId,
   OrchestrationCheckpointSummary,
@@ -15,13 +15,12 @@ import {
   OrchestrationThreadShell,
   OrchestrationThreadActivity,
   ProjectId,
-  ProviderKind,
   ScopedProjectRef,
   ScopedThreadRef,
-  ThreadId,
-  TurnId,
 } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
+import { ProviderKind } from "@t3tools/contracts";
+import type { ThreadId, TurnId } from "@t3tools/contracts";
+import { Equal, Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
@@ -130,9 +129,9 @@ function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function normalizeModelSelection<
-  T extends { provider: ProviderKind; model: string } & Record<string, unknown>,
->(selection: T): T {
+function normalizeModelSelection<T extends { provider: ProviderKind; model: string }>(
+  selection: T,
+): T {
   return {
     ...selection,
     model: resolveModelSlugForProvider(selection.provider, selection.model),
@@ -378,6 +377,19 @@ function threadSessionsEqual(
   );
 }
 
+function modelSelectionsEqual(
+  left: ThreadShell["modelSelection"] | undefined,
+  right: ThreadShell["modelSelection"] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (left === undefined || right === undefined) return false;
+  return (
+    left.provider === right.provider &&
+    left.model === right.model &&
+    Equal.equals(left.options, right.options)
+  );
+}
+
 function sidebarThreadSummariesEqual(
   left: SidebarThreadSummary | undefined,
   right: SidebarThreadSummary,
@@ -410,7 +422,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.codexThreadId === right.codexThreadId &&
     left.projectId === right.projectId &&
     left.title === right.title &&
-    left.modelSelection === right.modelSelection &&
+    modelSelectionsEqual(left.modelSelection, right.modelSelection) &&
     left.runtimeMode === right.runtimeMode &&
     left.interactionMode === right.interactionMode &&
     left.error === right.error &&
@@ -1003,7 +1015,7 @@ function toLegacySessionStatus(
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
   if (Schema.is(ProviderKind)(providerName)) {
-    return providerName as ProviderKind;
+    return providerName;
   }
   return "codex";
 }

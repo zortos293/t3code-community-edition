@@ -37,6 +37,10 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         status: "warning",
         auth: { status: "unknown" },
       });
+      const openCodeProvider = makeProvider("opencode", {
+        status: "warning",
+        auth: { status: "unknown", type: "opencode" },
+      });
       const codexPath = resolveProviderStatusCachePath({
         cacheDir: tempDir,
         provider: "codex",
@@ -44,6 +48,10 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       const claudePath = resolveProviderStatusCachePath({
         cacheDir: tempDir,
         provider: "claudeAgent",
+      });
+      const openCodePath = resolveProviderStatusCachePath({
+        cacheDir: tempDir,
+        provider: "opencode",
       });
 
       yield* writeProviderStatusCache({
@@ -54,16 +62,72 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         filePath: claudePath,
         provider: claudeProvider,
       });
+      yield* writeProviderStatusCache({
+        filePath: openCodePath,
+        provider: openCodeProvider,
+      });
 
       assert.deepStrictEqual(yield* readProviderStatusCache(codexPath), codexProvider);
       assert.deepStrictEqual(yield* readProviderStatusCache(claudePath), claudeProvider);
+      assert.deepStrictEqual(yield* readProviderStatusCache(openCodePath), openCodeProvider);
     }),
   );
 
-  it("hydrates cached provider status onto current settings-derived models", () => {
+  it.effect("ignores stale writes when a newer provider snapshot is already cached", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-stale-" });
+      const filePath = resolveProviderStatusCachePath({
+        cacheDir: tempDir,
+        provider: "codex",
+      });
+      const newerProvider = makeProvider("codex", {
+        checkedAt: "2026-04-11T01:00:00.000Z",
+        version: "2.0.0",
+      });
+      const olderProvider = makeProvider("codex", {
+        checkedAt: "2026-04-11T00:00:00.000Z",
+        version: "1.0.0",
+      });
+
+      yield* writeProviderStatusCache({ filePath, provider: newerProvider });
+      yield* writeProviderStatusCache({ filePath, provider: olderProvider });
+
+      assert.deepStrictEqual(yield* readProviderStatusCache(filePath), newerProvider);
+    }),
+  );
+
+  it("hydrates cached provider status while keeping settings-derived model membership authoritative", () => {
     const cachedCodex = makeProvider("codex", {
       checkedAt: "2026-04-10T12:00:00.000Z",
-      models: [],
+      models: [
+        {
+          slug: "gpt-5-mini",
+          name: "GPT-5 Mini",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+        },
+        {
+          slug: "gpt-5.4",
+          name: "GPT-5.4",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+          },
+          billingMultiplier: 2,
+          maxContextWindowTokens: 128_000,
+        },
+      ],
       message: "Cached message",
       skills: [
         {
@@ -99,6 +163,20 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       }),
       {
         ...fallbackCodex,
+        models: [
+          {
+            ...fallbackCodex.models[0]!,
+            billingMultiplier: 2,
+            maxContextWindowTokens: 128_000,
+            capabilities: {
+              reasoningEffortLevels: [],
+              supportsFastMode: false,
+              supportsThinkingToggle: false,
+              contextWindowOptions: [],
+              promptInjectedEffortLevels: [],
+            },
+          },
+        ],
         installed: cachedCodex.installed,
         version: cachedCodex.version,
         status: cachedCodex.status,
@@ -111,148 +189,34 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
     );
   });
 
-  it("preserves cached runtime-discovered models during cache hydration", () => {
-    const cachedCopilot = makeProvider("copilot", {
+  it("does not resurrect cached-only models after they are removed from current settings", () => {
+    const cachedCodex = makeProvider("codex", {
       models: [
         {
-          slug: "gpt-5",
-          name: "GPT-5",
-          isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
-        },
-        {
-          slug: "claude-opus-4.7",
-          name: "Claude Opus 4.7",
-          isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
-        },
-      ],
-    });
-    const fallbackCopilot = makeProvider("copilot", {
-      models: [
-        {
-          slug: "gpt-5",
-          name: "GPT-5 fallback",
-          isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
-        },
-      ],
-    });
-
-    assert.deepStrictEqual(
-      hydrateCachedProvider({
-        cachedProvider: cachedCopilot,
-        fallbackProvider: fallbackCopilot,
-      }).models,
-      cachedCopilot.models,
-    );
-  });
-
-  it("does not resurrect removed cached custom models during cache hydration", () => {
-    const cachedClaude = makeProvider("claudeAgent", {
-      models: [
-        {
-          slug: "claude-custom-removed",
-          name: "Claude Custom Removed",
+          slug: "gpt-legacy-custom",
+          name: "GPT Legacy Custom",
           isCustom: true,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
-        },
-        {
-          slug: "claude-runtime-discovered",
-          name: "Claude Runtime Discovered",
-          isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: null,
         },
       ],
     });
-    const fallbackClaude = makeProvider("claudeAgent", {
+    const fallbackCodex = makeProvider("codex", {
       models: [
         {
-          slug: "claude-opus-4-6",
-          name: "Claude Opus 4.6",
+          slug: "gpt-5.4",
+          name: "GPT-5.4",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: null,
         },
       ],
     });
 
     assert.deepStrictEqual(
       hydrateCachedProvider({
-        cachedProvider: cachedClaude,
-        fallbackProvider: fallbackClaude,
+        cachedProvider: cachedCodex,
+        fallbackProvider: fallbackCodex,
       }).models,
-      [fallbackClaude.models[0]!, cachedClaude.models[1]!],
-    );
-  });
-
-  it("preserves missing quota snapshots during cache hydration", () => {
-    const cachedCopilot = makeProvider("copilot", {
-      quotaSnapshots: undefined,
-    });
-    const fallbackCopilot = makeProvider("copilot", {
-      quotaSnapshots: [
-        {
-          key: "premium_interactions",
-          entitlementRequests: 100,
-          usedRequests: 25,
-          remainingPercentage: 75,
-          overage: 0,
-          overageAllowedWithExhaustedQuota: false,
-        },
-      ],
-    });
-
-    assert.deepStrictEqual(
-      hydrateCachedProvider({
-        cachedProvider: cachedCopilot,
-        fallbackProvider: fallbackCopilot,
-      }),
-      {
-        ...fallbackCopilot,
-        installed: cachedCopilot.installed,
-        version: cachedCopilot.version,
-        status: cachedCopilot.status,
-        auth: cachedCopilot.auth,
-        checkedAt: cachedCopilot.checkedAt,
-        slashCommands: cachedCopilot.slashCommands,
-        skills: cachedCopilot.skills,
-      },
+      fallbackCodex.models,
     );
   });
 

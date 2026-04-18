@@ -1,4 +1,8 @@
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  type PersistedSavedEnvironmentRecord,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const testEnvironmentId = EnvironmentId.make("environment-1");
@@ -37,21 +41,15 @@ function getTestWindow(): Window & typeof globalThis {
   const testWindow = {
     localStorage,
   } as Window & typeof globalThis;
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: testWindow,
-  });
-  Object.defineProperty(globalThis, "localStorage", {
-    configurable: true,
-    value: localStorage,
-  });
+  vi.stubGlobal("window", testWindow);
+  vi.stubGlobal("localStorage", localStorage);
   return testWindow;
 }
 
 afterEach(() => {
+  vi.resetModules();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  Reflect.deleteProperty(globalThis, "window");
-  Reflect.deleteProperty(globalThis, "localStorage");
 });
 
 describe("clientPersistenceStorage", () => {
@@ -84,20 +82,17 @@ describe("clientPersistenceStorage", () => {
     });
   });
 
-  it("migrates legacy browser client settings during hydration", async () => {
+  it("migrates legacy browser client settings into the current storage key", async () => {
     const testWindow = getTestWindow();
     testWindow.localStorage.setItem(
       "t3code:app-settings:v1",
       JSON.stringify({
-        confirmThreadArchive: true,
-        confirmThreadDelete: false,
-        diffWordWrap: true,
+        confirmThreadArchive: false,
         sidebarProjectGroupingMode: "repository_path",
         sidebarProjectGroupingOverrides: {
-          "/repo": "separate",
+          "env:/workspace/project-a": "separate",
         },
         sidebarProjectSortOrder: "manual",
-        sidebarThreadSortOrder: "created_at",
         timestampFormat: "24-hour",
       }),
     );
@@ -106,29 +101,25 @@ describe("clientPersistenceStorage", () => {
       await import("./clientPersistenceStorage");
 
     expect(readBrowserClientSettings()).toEqual({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
+      ...DEFAULT_CLIENT_SETTINGS,
+      confirmThreadArchive: false,
       sidebarProjectGroupingMode: "repository_path",
       sidebarProjectGroupingOverrides: {
-        "/repo": "separate",
+        "env:/workspace/project-a": "separate",
       },
       sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-    });
-    expect(JSON.parse(testWindow.localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY)!)).toEqual({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      sidebarProjectGroupingMode: "repository_path",
-      sidebarProjectGroupingOverrides: {
-        "/repo": "separate",
-      },
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
       timestampFormat: "24-hour",
     });
     expect(testWindow.localStorage.getItem("t3code:app-settings:v1")).toBeNull();
+    expect(JSON.parse(testWindow.localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY)!)).toEqual({
+      ...DEFAULT_CLIENT_SETTINGS,
+      confirmThreadArchive: false,
+      sidebarProjectGroupingMode: "repository_path",
+      sidebarProjectGroupingOverrides: {
+        "env:/workspace/project-a": "separate",
+      },
+      sidebarProjectSortOrder: "manual",
+      timestampFormat: "24-hour",
+    });
   });
 });

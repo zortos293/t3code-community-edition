@@ -10,21 +10,8 @@ interface MockUpdateServerConfig {
   readonly rootRealPath: string;
 }
 
-export const resolveRootRealPath = (resolvedRoot: string) =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    return yield* fileSystem
-      .realPath(resolvedRoot)
-      .pipe(
-        Effect.catch((error) =>
-          error._tag === "PlatformError" && error.reason?._tag === "NotFound"
-            ? Effect.succeed(resolvedRoot)
-            : Effect.fail(error),
-        ),
-      );
-  });
-
 const resolveMockUpdateServerConfig = Effect.gen(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* Config.all({
     port: Config.port("T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT").pipe(Config.withDefault(3000)),
@@ -37,7 +24,7 @@ const resolveMockUpdateServerConfig = Effect.gen(function* () {
 
   return {
     port: config.port,
-    rootRealPath: yield* resolveRootRealPath(resolvedRoot),
+    rootRealPath: yield* fileSystem.realPath(resolvedRoot),
   } satisfies MockUpdateServerConfig;
 });
 

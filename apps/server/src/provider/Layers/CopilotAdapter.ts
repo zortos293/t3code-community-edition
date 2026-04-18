@@ -1295,6 +1295,24 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
       sessions.delete(record.threadId);
     };
 
+    const stopClientAfterFailedStart = (client: CopilotClientHandle, threadId: ThreadId) =>
+      Effect.tryPromise({
+        try: async () => {
+          await client.stop();
+        },
+        catch: (cause) =>
+          new ProviderAdapterProcessError({
+            provider: PROVIDER,
+            threadId,
+            detail: toMessage(cause, "Failed to stop GitHub Copilot client after startup failure."),
+            cause,
+          }),
+      }).pipe(
+        Effect.catchCause(() =>
+          Effect.logWarning("Failed to stop GitHub Copilot client after startup failure."),
+        ),
+      );
+
     const startSession: CopilotAdapterShape["startSession"] = (input) =>
       Effect.gen(function* () {
         const copilotSettings = yield* serverSettings.getSettings.pipe(
@@ -1371,16 +1389,29 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
           pendingUserInputResolvers,
         );
 
-        yield* validateSessionConfiguration({
-          client,
-          threadId: input.threadId,
-          ...sessionConfiguration,
-        });
+        return yield* Effect.gen(function* () {
+          yield* validateSessionConfiguration({
+            client,
+            threadId: input.threadId,
+            ...sessionConfiguration,
+          });
 
-        const session = yield* Effect.tryPromise({
-          try: async () => {
-            if (resumeSessionId) {
-              return client.resumeSession(resumeSessionId, {
+          const session = yield* Effect.tryPromise({
+            try: async () => {
+              if (resumeSessionId) {
+                return client.resumeSession(resumeSessionId, {
+                  ...handlers,
+                  ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
+                  ...(sessionConfiguration.reasoningEffort
+                    ? { reasoningEffort: sessionConfiguration.reasoningEffort }
+                    : {}),
+                  ...(input.cwd ? { workingDirectory: input.cwd } : {}),
+                  ...(configDir ? { configDir } : {}),
+                  ...(mcpServers ? { mcpServers } : {}),
+                  streaming: true,
+                });
+              }
+              return client.createSession({
                 ...handlers,
                 ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
                 ...(sessionConfiguration.reasoningEffort
@@ -1391,84 +1422,73 @@ const makeCopilotAdapter = (options?: CopilotAdapterLiveOptions) =>
                 ...(mcpServers ? { mcpServers } : {}),
                 streaming: true,
               });
-            }
-            return client.createSession({
-              ...handlers,
-              ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
-              ...(sessionConfiguration.reasoningEffort
-                ? { reasoningEffort: sessionConfiguration.reasoningEffort }
-                : {}),
-              ...(input.cwd ? { workingDirectory: input.cwd } : {}),
-              ...(configDir ? { configDir } : {}),
-              ...(mcpServers ? { mcpServers } : {}),
-              streaming: true,
-            });
-          },
-          catch: (cause) =>
-            new ProviderAdapterProcessError({
-              provider: PROVIDER,
-              threadId: input.threadId,
-              detail: toMessage(cause, "Failed to start GitHub Copilot session."),
-              cause,
-            }),
-        });
-
-        const record = createSessionRecord({
-          threadId: input.threadId,
-          client,
-          session,
-          runtimeMode: input.runtimeMode,
-          pendingApprovalResolvers,
-          pendingUserInputResolvers,
-          cwd: input.cwd,
-          configDir,
-          ...sessionConfiguration,
-        });
-        const unsubscribe = session.on((event) => {
-          handleSessionEvent(record, event);
-        });
-        record.unsubscribe = unsubscribe;
-        sessionRecord = record;
-        sessions.set(input.threadId, record);
-
-        yield* Queue.offerAll(runtimeEventQueue, [
-          makeSyntheticEvent(input.threadId, "session.started", {
-            message: resumeSessionId
-              ? "Resumed GitHub Copilot session"
-              : "Started GitHub Copilot session",
-            resume: { sessionId: session.sessionId },
-          }),
-          makeSyntheticEvent(input.threadId, "session.configured", {
-            config: {
-              ...(input.cwd ? { cwd: input.cwd } : {}),
-              ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
-              ...(sessionConfiguration.reasoningEffort
-                ? { reasoningEffort: sessionConfiguration.reasoningEffort }
-                : {}),
-              ...(configDir ? { configDir } : {}),
-              streaming: true,
             },
-          }),
-          makeSyntheticEvent(input.threadId, "thread.started", {
-            providerThreadId: session.sessionId,
-          }),
-          makeSyntheticEvent(input.threadId, "session.state.changed", {
-            state: "ready",
-            reason: "session.started",
-          }),
-        ]);
+            catch: (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId: input.threadId,
+                detail: toMessage(cause, "Failed to start GitHub Copilot session."),
+                cause,
+              }),
+          });
 
-        return {
-          provider: PROVIDER,
-          status: "ready",
-          runtimeMode: input.runtimeMode,
-          ...(input.cwd ? { cwd: input.cwd } : {}),
-          ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
-          threadId: input.threadId,
-          resumeCursor: session.sessionId,
-          createdAt: record.createdAt,
-          updatedAt: record.updatedAt,
-        } satisfies ProviderSession;
+          const record = createSessionRecord({
+            threadId: input.threadId,
+            client,
+            session,
+            runtimeMode: input.runtimeMode,
+            pendingApprovalResolvers,
+            pendingUserInputResolvers,
+            cwd: input.cwd,
+            configDir,
+            ...sessionConfiguration,
+          });
+          const unsubscribe = session.on((event) => {
+            handleSessionEvent(record, event);
+          });
+          record.unsubscribe = unsubscribe;
+          sessionRecord = record;
+          sessions.set(input.threadId, record);
+
+          yield* Queue.offerAll(runtimeEventQueue, [
+            makeSyntheticEvent(input.threadId, "session.started", {
+              message: resumeSessionId
+                ? "Resumed GitHub Copilot session"
+                : "Started GitHub Copilot session",
+              resume: { sessionId: session.sessionId },
+            }),
+            makeSyntheticEvent(input.threadId, "session.configured", {
+              config: {
+                ...(input.cwd ? { cwd: input.cwd } : {}),
+                ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
+                ...(sessionConfiguration.reasoningEffort
+                  ? { reasoningEffort: sessionConfiguration.reasoningEffort }
+                  : {}),
+                ...(configDir ? { configDir } : {}),
+                streaming: true,
+              },
+            }),
+            makeSyntheticEvent(input.threadId, "thread.started", {
+              providerThreadId: session.sessionId,
+            }),
+            makeSyntheticEvent(input.threadId, "session.state.changed", {
+              state: "ready",
+              reason: "session.started",
+            }),
+          ]);
+
+          return {
+            provider: PROVIDER,
+            status: "ready",
+            runtimeMode: input.runtimeMode,
+            ...(input.cwd ? { cwd: input.cwd } : {}),
+            ...(sessionConfiguration.model ? { model: sessionConfiguration.model } : {}),
+            threadId: input.threadId,
+            resumeCursor: session.sessionId,
+            createdAt: record.createdAt,
+            updatedAt: record.updatedAt,
+          } satisfies ProviderSession;
+        }).pipe(Effect.onError(() => stopClientAfterFailedStart(client, input.threadId)));
       });
 
     const sendTurn: CopilotAdapterShape["sendTurn"] = (input) =>

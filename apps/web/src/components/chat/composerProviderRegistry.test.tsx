@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ServerProviderModel } from "@t3tools/contracts";
 import {
+  getComposerProviderControls,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -19,24 +20,6 @@ const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
         { value: "low", label: "Low" },
       ],
       supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    },
-  },
-];
-
-const COPILOT_MODELS: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "claude-sonnet-4",
-    name: "Claude Sonnet 4",
-    isCustom: false,
-    capabilities: {
-      reasoningEffortLevels: [
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
-      ],
-      supportsFastMode: false,
       supportsThinkingToggle: false,
       contextWindowOptions: [],
       promptInjectedEffortLevels: [],
@@ -128,6 +111,29 @@ const CLAUDE_MODELS_WITH_CONTEXT_WINDOW: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+const OPENCODE_MODELS: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "openai/gpt-5",
+    name: "GPT-5",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [],
+      supportsFastMode: false,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+      variantOptions: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium", isDefault: true },
+      ],
+      agentOptions: [
+        { value: "build", label: "Build", isDefault: true },
+        { value: "plan", label: "Plan" },
+      ],
+    },
+  },
+];
+
 describe("getComposerProviderState", () => {
   it("returns codex defaults when no codex draft options exist", () => {
     const state = getComposerProviderState({
@@ -167,28 +173,6 @@ describe("getComposerProviderState", () => {
       modelOptionsForDispatch: {
         reasoningEffort: "low",
         fastMode: true,
-      },
-    });
-  });
-
-  it("normalizes copilot dispatch options using reasoningEffort", () => {
-    const state = getComposerProviderState({
-      provider: "copilot",
-      model: "claude-sonnet-4",
-      models: COPILOT_MODELS,
-      prompt: "",
-      modelOptions: {
-        copilot: {
-          reasoningEffort: "medium",
-        },
-      },
-    });
-
-    expect(state).toEqual({
-      provider: "copilot",
-      promptEffort: "medium",
-      modelOptionsForDispatch: {
-        reasoningEffort: "medium",
       },
     });
   });
@@ -459,6 +443,183 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state.modelOptionsForDispatch).not.toHaveProperty("fastMode");
+  });
+
+  it("preserves OpenCode variant and agent options for dispatch", () => {
+    const state = getComposerProviderState({
+      provider: "opencode",
+      model: "openai/gpt-5",
+      models: OPENCODE_MODELS,
+      prompt: "",
+      modelOptions: {
+        opencode: {
+          variant: "medium",
+          agent: "plan",
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "opencode",
+      promptEffort: "medium",
+      modelOptionsForDispatch: {
+        variant: "medium",
+        agent: "plan",
+      },
+    });
+  });
+
+  it("preserves explicit fastMode: false so deepMerge can overwrite a prior true", () => {
+    // Regression: normalizeClaudeModelOptionsWithCapabilities used to strip
+    // fastMode: false, which meant deepMerge could never clear a previous true.
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "high",
+          fastMode: false,
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("fastMode", false);
+  });
+
+  it("preserves explicit thinking: true so deepMerge can overwrite a prior false", () => {
+    // Regression: thinking: true (the default) used to be stripped, which
+    // meant deepMerge could never clear a previous thinking: false.
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-haiku-4-5",
+      models: CLAUDE_MODELS,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          thinking: true,
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("thinking", true);
+  });
+
+  it("preserves Claude default context window explicitly in dispatch options", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS_WITH_CONTEXT_WINDOW,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "high",
+          contextWindow: "200k",
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toMatchObject({
+      effort: "high",
+      contextWindow: "200k",
+    });
+  });
+
+  it("preserves explicit contextWindow default so deepMerge can overwrite a prior 1m", () => {
+    // Regression: the default contextWindow must survive normalization so
+    // deepMerge can clear an older non-default 1m selection.
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      models: CLAUDE_MODELS_WITH_CONTEXT_WINDOW,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          contextWindow: "200k",
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toHaveProperty("contextWindow", "200k");
+  });
+
+  it("omits contextWindow when the model does not support it", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-haiku-4-5",
+      models: CLAUDE_MODELS_WITH_CONTEXT_WINDOW,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          contextWindow: "1m",
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toBeUndefined();
+  });
+
+  it("omits fastMode when the model does not support it", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      models: CLAUDE_MODELS,
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "high",
+          fastMode: true,
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).not.toHaveProperty("fastMode");
+  });
+});
+
+describe("provider traits render guards", () => {
+  it("returns null for codex traits picker when no thread target is provided", () => {
+    const content = renderProviderTraitsPicker({
+      provider: "codex",
+      model: "gpt-5.4",
+      models: CODEX_MODELS,
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+    });
+
+    expect(content).toBeNull();
+  });
+
+  it("returns null for claude traits menu content when no thread target is provided", () => {
+    const content = renderProviderTraitsMenuContent({
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      models: CLAUDE_MODELS,
+      modelOptions: undefined,
+      prompt: "",
+      onPromptChange: () => {},
+    });
+
+    expect(content).toBeNull();
+  });
+});
+
+describe("getComposerProviderControls", () => {
+  it("hides the interaction mode toggle for OpenCode", () => {
+    expect(getComposerProviderControls("opencode")).toEqual({
+      showInteractionModeToggle: false,
+    });
+  });
+
+  it("keeps the interaction mode toggle for Codex and Claude", () => {
+    expect(getComposerProviderControls("codex")).toEqual({
+      showInteractionModeToggle: true,
+    });
+    expect(getComposerProviderControls("claudeAgent")).toEqual({
+      showInteractionModeToggle: true,
+    });
   });
 });
 

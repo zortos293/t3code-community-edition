@@ -558,7 +558,7 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
-export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
+const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
   version: string,
@@ -610,12 +610,15 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   }
 
   if (platform === "win") {
+    buildConfig.npmRebuild = false;
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
     };
     if (signed) {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
+    } else {
+      winConfig.signAndEditExecutable = false;
     }
     buildConfig.win = winConfig;
   }
